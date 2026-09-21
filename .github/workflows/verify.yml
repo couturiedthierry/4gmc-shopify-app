@@ -1,0 +1,32 @@
+name: Verify 4GMC
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ADMIN_PASSWORD: github-actions-test-password
+      SESSION_SECRET: github-actions-session-secret-long-enough
+      TOKEN_ENCRYPTION_KEY: gSshRf2B2r-GNbuLXaFPk0eaJEjV6cVIgch27Cb37_A=
+      PUBLIC_URL: http://localhost:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements.txt
+      - name: Run application checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          for test_file in tests/test_*.py; do
+            echo "Running ${test_file}"
+            python "${test_file}"
+          done
