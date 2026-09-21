@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: 4gmc-shopify-app
+    runtime: docker
+    region: frankfurt
+    plan: 0.5c-512mb
+    autoDeployTrigger: commit
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    maxShutdownDelaySeconds: 120
+    envVars:
+      - key: PUBLIC_URL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: SMARTAPI_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SHOPIFY_CLIENT_ID
+        sync: false
+      - key: SHOPIFY_CLIENT_SECRET
+        sync: false
+    disk:
+      name: 4gmc-data
+      mountPath: /app/data
+      sizeGB: 1
