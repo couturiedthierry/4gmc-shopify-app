@@ -2577,9 +2577,12 @@ async def shopify_callback(request:Request):
     except ValueError:
         fail('Shopify returned an invalid token response',502)
     access,refresh,expires_at,refresh_expires_at=token_pair(payload)
-    granted=scope_set(payload.get('scope',''))
-    if not set(SHOPIFY_SCOPES.split(',')).issubset(granted):
-        fail('Shopify did not grant all required permissions',403)
+    granted = scope_set(payload.get('scope', ''))
+    required = scope_set(SHOPIFY_SCOPES)
+    missing = required - granted
+    if missing:
+        fail('Shopify did not grant all required permissions. Missing scopes: ' + ', '.join(sorted(missing)), 403)
+
     encrypted_refresh = FERNET.encrypt(refresh.encode()).decode() if refresh else ''
     with db() as c:
         c.execute('UPDATE stores SET shopify_token=?,shopify_refresh_token=?,shopify_expires_at=?,shopify_refresh_expires_at=?,shopify_scopes=? WHERE id=1',
