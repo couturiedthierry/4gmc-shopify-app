@@ -90,6 +90,13 @@ async def exercise():
             assert not server.store_connected(row)
             assert row['shopify_token'] == ''
             assert row['shopify_refresh_token'] == ''
-    print('Shopify token renewal checks passed')
+def check_domain_normalization():
+    assert server.clean_shopify_domain('https://my-store.myshopify.com/') == 'my-store.myshopify.com'
+    assert server.clean_shopify_domain('my-store') == 'my-store.myshopify.com'
+    assert server.clean_shopify_domain('MY-STORE.MYSHOPIFY.COM') == 'my-store.myshopify.com'
+    assert server.valid_shopify_domain('my-store.myshopify.com') == 'my-store.myshopify.com'
 
+
+check_domain_normalization()
 asyncio.run(exercise())
+print('Shopify token renewal checks passed')

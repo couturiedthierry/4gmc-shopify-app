@@ -178,7 +178,31 @@ async def check_workflow():
             server.DB = old_db
 
 
+def check_legal_boilerplate_and_retries():
+    business = {'business_name': 'Example Co', 'domain_name': 'example.com',
+                'email': 'support@example.com', 'address': '123 Main St',
+                'phone': '+1 212 555 0100', 'country': 'United States', 'currency': 'USD'}
+    item = {'title': 'Privacy Policy', 'kind': 'privacy',
+            'source_url': 'https://source.example/policies/privacy-policy',
+            'example': 'We use your personal information to provide our services to you which includes offering products for sale processing payments shipping and fulfillment of your order.'}
+    boilerplate_phrase = 'we use your personal information to provide our services to you which includes offering products for sale processing payments shipping and fulfillment of your order'
+    body_with_boilerplate = ('Example Co respects customer privacy. Contact support@example.com or visit example.com for details. ' +
+                             boilerplate_phrase + '. We handle data in accordance with applicable laws.')
+    server.validate_brand_page(item, 'Privacy Policy', body_with_boilerplate, business, 'source.example', [])
+
+    unique_copied_phrase = 'custom artisanal handcrafted leather belts manufactured exclusively by master artisan mario in florence italy since nineteen eighty five'
+    copied_item = dict(item, example=unique_copied_phrase + ' extra text ' + unique_copied_phrase)
+    copied_body = ('Example Co contact support@example.com at example.com. ' + unique_copied_phrase + '. More text for customers.')
+    try:
+        server.validate_brand_page(copied_item, 'Privacy Policy', copied_body, business, 'source.example', [])
+    except Exception as error:
+        assert getattr(error, 'status_code', None) == 502
+    else:
+        raise AssertionError('Non-legal copied source passage must be rejected')
+
+
 check_parser()
 check_brand_validation()
+check_legal_boilerplate_and_retries()
 asyncio.run(check_workflow())
 print('Automated site kit checks passed')

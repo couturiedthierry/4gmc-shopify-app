@@ -601,11 +601,20 @@ async def generate_storefront(request: Request):
     return {'ok': True, 'pages': len(pages), 'products': len(products)}
 
 
+def clean_shopify_domain(domain: str) -> str:
+    clean = str(domain or '').strip().lower()
+    clean = re.sub(r'^https?://', '', clean).rstrip('/')
+    if clean and '.' not in clean:
+        clean = clean + '.myshopify.com'
+    return clean
+
+
 def valid_shopify_domain(domain: str) -> str:
-    domain = domain.strip().lower()
+    domain = clean_shopify_domain(domain)
     if not re.fullmatch(r'[a-z0-9][a-z0-9-]*\.myshopify\.com', domain):
         fail('Use the admin address ending in .myshopify.com')
     return domain
+
 
 
 def store_summaries():
@@ -1651,6 +1660,71 @@ def normalized_words(value):
     return re.findall(r'[a-z0-9]+', value.lower())
 
 
+GENERIC_LEGAL_WORDS = {
+    'a', 'about', 'acceptable', 'access', 'accordance', 'according', 'account', 'act', 'activities',
+    'addition', 'additional', 'address', 'administer', 'agree', 'agreement', 'all', 'allow', 'allowed',
+    'alter', 'amount', 'an', 'and', 'any', 'applicable', 'apply', 'approval', 'approve', 'are',
+    'arguments', 'as', 'ask', 'aspect', 'associated', 'at', 'automatically', 'available', 'be',
+    'because', 'been', 'before', 'behalf', 'being', 'between', 'bound', 'browser', 'business', 'by',
+    'california', 'can', 'cancellation', 'card', 'certain', 'change', 'changes', 'charges', 'check',
+    'claims', 'collect', 'collected', 'collecting', 'collection', 'company', 'comply', 'component',
+    'complaint', 'condition', 'conditions', 'confirm', 'consent', 'contact', 'contains', 'content',
+    'contract', 'cookie', 'cookies', 'correct', 'cost', 'costs', 'credit', 'currency', 'custom',
+    'customer', 'customers', 'damage', 'data', 'date', 'days', 'decision', 'delays', 'delivery',
+    'details', 'device', 'disclaim', 'disclaimer', 'discretion', 'dispute', 'do', 'do-not-track',
+    'document', 'domain', 'due', 'duration', 'each', 'economic', 'eea', 'effect', 'effective', 'either',
+    'email', 'entire', 'error', 'errors', 'essential', 'estate', 'etc', 'european', 'event', 'example',
+    'except', 'exclusion', 'experience', 'expires', 'express', 'fee', 'fees', 'file', 'files',
+    'following', 'for', 'form', 'from', 'fulfillment', 'full', 'further', 'general', 'give',
+    'governed', 'governing', 'grant', 'handling', 'has', 'have', 'help', 'holder', 'how', 'however',
+    'id', 'identify', 'identity', 'if', 'implied', 'important', 'in', 'include', 'included', 'includes',
+    'including', 'indemnify', 'indemnification', 'individual', 'information', 'inspection', 'interest',
+    'international', 'into', 'invitation', 'is', 'issue', 'issued', 'it', 'item', 'items', 'its',
+    'jurisdiction', 'keep', 'kind', 'know', 'language', 'law', 'laws', 'legal', 'liability', 'license',
+    'like', 'limitation', 'limitations', 'limited', 'local', 'location', 'log', 'loss', 'mail',
+    'make', 'may', 'means', 'member', 'method', 'methods', 'modification', 'modifications', 'modify',
+    'more', 'most', 'must', 'name', 'necessary', 'need', 'new', 'no', 'not', 'note', 'notice',
+    'notices', 'obligations', 'obtain', 'of', 'offered', 'offers', 'officer', 'official', 'offset',
+    'on', 'one', 'only', 'operating', 'operation', 'opt', 'or', 'order', 'orders', 'ordinary',
+    'organize', 'other', 'others', 'our', 'out', 'over', 'own', 'owner', 'ownership', 'packages',
+    'page', 'pages', 'party', 'parties', 'part', 'parts', 'past', 'payment', 'payments', 'perform',
+    'period', 'permission', 'person', 'personal', 'phone', 'policy', 'policies', 'post', 'posted',
+    'practices', 'price', 'prices', 'primary', 'privacy', 'procedure', 'process', 'processed',
+    'processing', 'product', 'products', 'protection', 'provide', 'provided', 'provider', 'providers',
+    'provides', 'providing', 'public', 'purchase', 'purchased', 'purchases', 'purpose', 'purposes',
+    'questions', 'rate', 'rates', 'read', 'reason', 'reasonable', 'reasons', 'receive', 'received',
+    'record', 'records', 'refer', 'reference', 'reflect', 'refund', 'refunds', 'regarding',
+    'regardless', 'region', 'register', 'registered', 'registration', 'regulate', 'regulations',
+    'regulatory', 'related', 'release', 'remedy', 'removal', 'remove', 'replace', 'replacement',
+    'report', 'request', 'requested', 'requests', 'require', 'required', 'requirements', 'reserve',
+    'reserves', 'resident', 'residents', 'resolve', 'respect', 'responsible', 'restriction',
+    'restrictions', 'retain', 'retained', 'return', 'returned', 'returns', 'review', 'right',
+    'rights', 'risk', 'sale', 'sales', 'same', 'section', 'sections', 'security', 'seek', 'send',
+    'sent', 'separate', 'service', 'services', 'shall', 'share', 'shared', 'ship', 'shipment',
+    'shipping', 'shopper', 'shoppers', 'shopping', 'short', 'should', 'show', 'signal', 'similar',
+    'site', 'sites', 'so', 'sole', 'solution', 'some', 'state', 'stated', 'statement', 'statute',
+    'statutory', 'store', 'stores', 'subject', 'submit', 'submitted', 'such', 'support', 'technical',
+    'technology', 'technologies', 'temporary', 'terms', 'the', 'their', 'them', 'then', 'there',
+    'thereof', 'these', 'they', 'third', 'this', 'those', 'through', 'time', 'timeframe', 'timeframes',
+    'to', 'together', 'total', 'track', 'tracking', 'transaction', 'transactions', 'transfer',
+    'transferred', 'transit', 'type', 'types', 'unauthorized', 'under', 'unforeseen', 'united', 'unit',
+    'unless', 'unlawful', 'until', 'up', 'update', 'updated', 'updates', 'upon', 'us', 'usa',
+    'usage', 'use', 'used', 'user', 'users', 'uses', 'using', 'valid', 'validity', 'value',
+    'variation', 'various', 'verification', 'verify', 'version', 'via', 'visit', 'visited', 'visiting',
+    'visitor', 'visitors', 'void', 'waive', 'warranty', 'warranties', 'was', 'we', 'web', 'website',
+    'websites', 'what', 'when', 'where', 'which', 'who', 'whom', 'whose', 'will', 'window', 'with',
+    'within', 'without', 'words', 'written', 'you', 'your', 'yours'
+}
+
+
+def is_generic_boilerplate(phrase):
+    words = phrase.split()
+    if not words:
+        return False
+    generic_count = sum(1 for w in words if w in GENERIC_LEGAL_WORDS)
+    return (generic_count / len(words)) >= 0.85
+
+
 def copied_source_passage(source, generated, width=14):
     source_words = normalized_words(source)
     generated_words = normalized_words(generated)
@@ -1661,8 +1735,11 @@ def copied_source_passage(source, generated, width=14):
     for index in range(len(generated_words) - width + 1):
         phrase = ' '.join(generated_words[index:index + width])
         if phrase in source_phrases:
+            if is_generic_boilerplate(phrase):
+                continue
             return phrase
     return ''
+
 
 
 def source_identity_terms(source_text, source_host, ai_terms=()):
@@ -1883,25 +1960,49 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
                     f'Destination facts: {json.dumps(business, ensure_ascii=False)}\n'
                     f'Reference blueprint: {json.dumps(blueprint, ensure_ascii=False)}'
                 )
-                result = await ai_json(writing_prompt, max_tokens=3500)
-                title = str(result.get('title', '')).strip()[:150] or title_hint
-                body = str(result.get('body', '')).strip()[:16000]
-                if item['kind'] in {'contact', 'faq'}:
-                    fixed_chat = 'Live Chat: Available on the website during business hours'
-                    fixed_hours = 'Business Hours: Mon-Fri: 9:00 AM - 5:00 PM (Eastern Time)'
-                    body = re.sub(r'(?im)^\s*Live Chat\s*:[^\n]*', '', body)
-                    body = re.sub(r'(?im)^\s*Business Hours\s*:[^\n]*', '', body).strip()
-                    if item['kind'] == 'contact':
-                        body = re.sub(r'(?im)^\s*(?:Email|Phone|Store address|Address|Website)\s*:[^\n]*', '', body).strip()
-                        body += ('\n\nContact ' + business['business_name'] +
-                                 '\n\nEmail: ' + business['email'] +
-                                 '\n\nPhone: ' + business['phone'] +
-                                 '\n\nStore address: ' + business['address'] +
-                                 '\n\nWebsite: ' + business['domain_name'])
-                    body += '\n\n' + fixed_chat + '\n\n' + fixed_hours
-                if item['kind'] in site_kit.POLICY_PATHS:
-                    title = SITE_KIT_TITLES[item['kind']]
-                validate_brand_page(item, title, body, business, source_host, identities)
+                rewrite_directions = (
+                    '',
+                    '\nSECOND PASS: A previous draft failed automated originality or brand validation. '
+                    'Start again from the facts. Use concise question-style headings, shorter sentences, and a '
+                    'different order. Do not reuse any sentence or long phrase from a reference or earlier draft.',
+                    '\nFINAL PASS: Start from a blank page. Use direct action-based headings and plain customer '
+                    'language. Express every rule in a new sentence structure while preserving every supplied fact.',
+                )
+                last_validation_error = None
+                for attempt, rewrite_direction in enumerate(rewrite_directions, 1):
+                    result = await ai_json(writing_prompt + rewrite_direction, max_tokens=3500)
+                    title = str(result.get('title', '')).strip()[:150] or title_hint
+                    body = str(result.get('body', '')).strip()[:16000]
+                    if item['kind'] in {'contact', 'faq'}:
+                        fixed_chat = 'Live Chat: Available on the website during business hours'
+                        fixed_hours = 'Business Hours: Mon-Fri: 9:00 AM - 5:00 PM (Eastern Time)'
+                        body = re.sub(r'(?im)^\s*Live Chat\s*:[^\n]*', '', body)
+                        body = re.sub(r'(?im)^\s*Business Hours\s*:[^\n]*', '', body).strip()
+                        if item['kind'] == 'contact':
+                            body = re.sub(r'(?im)^\s*(?:Email|Phone|Store address|Address|Website)\s*:[^\n]*', '', body).strip()
+                            body += ('\n\nContact ' + business['business_name'] +
+                                     '\n\nEmail: ' + business['email'] +
+                                     '\n\nPhone: ' + business['phone'] +
+                                     '\n\nStore address: ' + business['address'] +
+                                     '\n\nWebsite: ' + business['domain_name'])
+                        body += '\n\n' + fixed_chat + '\n\n' + fixed_hours
+                    if item['kind'] in site_kit.POLICY_PATHS:
+                        title = SITE_KIT_TITLES[item['kind']]
+                    try:
+                        validate_brand_page(item, title, body, business, source_host, identities)
+                    except HTTPException as error:
+                        last_validation_error = error
+                        if attempt == len(rewrite_directions):
+                            raise
+                        if progress:
+                            async with progress_lock:
+                                progress(f'Rewriting {title_hint} to pass brand and originality checks…',
+                                         completed_count, len(items))
+                        continue
+                    last_validation_error = None
+                    break
+                if last_validation_error:
+                    raise last_validation_error
                 guard = {
                     'version': 2,
                     'identity_hash': business_identity_hash(business),
@@ -2409,17 +2510,61 @@ async def shopify_callback(request:Request):
     if params.get('error'):
         detail = str(params.get('error_description') or params['error']).strip()
         fail('Shopify authorization was not approved: ' + detail, 403)
-    with db() as c: domain=store_row(c)['domain']
-    if params.get('shop') != domain:
-        fail('Shopify store mismatch',403)
-    try:
-        async with httpx.AsyncClient(timeout=30,follow_redirects=False) as client:
-            response=await client.post(f'https://{domain}/admin/oauth/access_token',
-                data={'client_id':client_id,'client_secret':client_secret,
-                      'code':params.get('code',''),'expiring':'1'},
-                headers={'Accept':'application/json'})
-    except httpx.RequestError:
-        fail('Shopify token exchange could not be reached',502)
+    with db() as c: domain = store_row(c)['domain']
+    expected_domain = clean_shopify_domain(domain)
+    received_shop = clean_shopify_domain(params.get('shop', ''))
+
+    target_shop = expected_domain
+    token_response = None
+    if received_shop != expected_domain:
+        print(f"Shopify OAuth domain check: expected='{expected_domain}', received='{received_shop}'")
+        verified_canonical = False
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+                res = await client.post(
+                    f'https://{received_shop}/admin/oauth/access_token',
+                    data={'client_id': client_id, 'client_secret': client_secret,
+                          'code': params.get('code', ''), 'expiring': '1'},
+                    headers={'Accept': 'application/json'}
+                )
+                if res.status_code == 200:
+                    payload = res.json()
+                    access, _, _, _ = token_pair(payload)
+                    gql_res = await client.post(
+                        f'https://{received_shop}/admin/api/2026-07/graphql.json',
+                        json={'query': 'query { shop { myshopifyDomain primaryDomain { host } } }'},
+                        headers={'X-Shopify-Access-Token': access, 'Content-Type': 'application/json'}
+                    )
+                    if gql_res.status_code == 200:
+                        shop_data = (gql_res.json().get('data') or {}).get('shop') or {}
+                        canonical_myshopify = clean_shopify_domain(shop_data.get('myshopifyDomain', ''))
+                        primary_host = clean_shopify_domain((shop_data.get('primaryDomain') or {}).get('host') or '')
+                        if canonical_myshopify in (expected_domain, received_shop) or primary_host in (expected_domain, received_shop):
+                            verified_canonical = True
+                            target_shop = received_shop
+                            token_response = res
+                            with db() as c:
+                                c.execute('UPDATE stores SET domain=? WHERE id=1', (target_shop,))
+        except Exception:
+            verified_canonical = False
+
+        if not verified_canonical:
+            fail(f"Shopify authorization store mismatch: expected '{expected_domain}', but Shopify returned '{received_shop}'. Please verify you are logged into the correct store in Shopify.", 403)
+
+    if token_response is None:
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+                token_response = await client.post(
+                    f'https://{target_shop}/admin/oauth/access_token',
+                    data={'client_id': client_id, 'client_secret': client_secret,
+                          'code': params.get('code', ''), 'expiring': '1'},
+                    headers={'Accept': 'application/json'}
+                )
+        except httpx.RequestError:
+            fail('Shopify token exchange could not be reached', 502)
+
+    response = token_response
+
     if response.status_code != 200:
         try:
             error_payload = response.json()

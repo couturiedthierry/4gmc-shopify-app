@@ -15,10 +15,19 @@ const readBrandFile = (file) => new Promise((resolve,reject)=>{
   reader.readAsDataURL(file);
 });
 const messageText = (value, fallback='The request could not be completed') => {
- if(typeof value==='string'&&value.trim())return value;
- if(Array.isArray(value))return value.map(item=>messageText(item,'')).filter(Boolean).join(' · ')||fallback;
- if(value&&typeof value==='object')return messageText(value.msg||value.message||value.detail,JSON.stringify(value));
- return fallback;
+  if (typeof value === 'string' && value.trim()) return value;
+  if (Array.isArray(value)) return value.map(item => messageText(item, '')).filter(Boolean).join(' · ') || fallback;
+  if (value && typeof value === 'object') {
+    if (value instanceof Error && value.message) return value.message;
+    const msg = value.msg || value.message || value.detail;
+    if (msg && typeof msg === 'string') return msg;
+    if (msg) return messageText(msg, fallback);
+    try {
+      const str = JSON.stringify(value);
+      if (str && str !== '{}') return str;
+    } catch {}
+  }
+  return fallback;
 };
 const hideToast = () => { const el=$('toast'); el.classList.remove('show','persistent'); };
 const showToast = (message, persistent=false) => { const el=$('toast'); el.textContent=messageText(message,'Saved successfully'); el.classList.toggle('persistent',persistent); el.classList.add('show'); clearTimeout(showToast.timer); if(!persistent)showToast.timer=setTimeout(hideToast,7000); };
