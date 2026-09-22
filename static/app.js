@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
-let data = null, view = 'overview', editProduct = null, editPage = null, usaPlan = null, siteKitPlan = null, siteKitLastRun = null, siteKitJob = null, siteKitPollTimer = null, productRun = null, previewTab = 'home', busy = false;
-const names = {overview:'Overview',products:'Products',pages:'Pages & policies',design:'Store design',business:'Business & brand',connections:'Connections',activity:'Activity'};
+let data = null, view = 'overview', editProduct = null, editPage = null, usaPlan = null, siteKitPlan = null, siteKitLastRun = null, siteKitJob = null, siteKitPollTimer = null, catalogJob = null, catalogPollTimer = null, productRun = null, previewTab = 'home', busy = false;
+const names = {overview:'Overview',products:'Products',pages:'Pages & policies',design:'Store design',business:'Business & brand',connections:'Connections',tasks:'Task center',activity:'Activity'};
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const val = (id) => $(id)?.value.trim() || '';
 const brandAssetUrl = (kind, metadata) => metadata?.digest?`/api/store/brand-assets/${kind}?v=${encodeURIComponent(metadata.digest)}`:'';
@@ -32,7 +32,14 @@ async function api(path, method='GET', body) {
   return result;
 }
 async function refresh(){
-  try{data=await api('/api/state');if(data.store.policy_source_url){try{siteKitPlan=await api('/api/site-kit/plan');}catch{siteKitPlan=null;}}if(data.site_kit_job){watchSiteKitJob(data.site_kit_job);}$('login').classList.add('hidden');$('app').classList.remove('hidden');render();}
+  try{
+   data=await api('/api/state');
+   if(data.store.policy_source_url){try{siteKitPlan=await api('/api/site-kit/plan');}catch{siteKitPlan=null;}}
+   if(data.site_kit_job)watchSiteKitJob(data.site_kit_job);
+   const activeCatalog=(data.jobs||[]).find(job=>job.kind==='catalog'&&job.store_id===data.active_store_id&&['queued','running'].includes(job.status));
+   if(activeCatalog)watchCatalogJob(activeCatalog);
+   $('login').classList.add('hidden');$('app').classList.remove('hidden');render();
+  }
   catch(error){if(error.message==='Sign in to continue'){$('login').classList.remove('hidden');$('app').classList.add('hidden');return;}throw error;}
 }
 const siteKitRunning = () => ['queued','running'].includes(siteKitJob?.status);
@@ -43,11 +50,13 @@ function watchSiteKitJob(job){
 async function pollSiteKitJob(){
  if(!siteKitJob?.id)return;
  try{
-  const job=await api('/api/site-kit/jobs/'+siteKitJob.id);siteKitJob=job;siteKitLastRun=job.progress;
+  const job=await api('/api/jobs/'+siteKitJob.id);siteKitJob=job;siteKitLastRun=job.progress;
   if(view==='pages'&&data)render();
   if(siteKitRunning()){siteKitPollTimer=setTimeout(pollSiteKitJob,1800);return;}
   if(job.status==='failed'){siteKitJob=null;showToast(job.error||'Page generation failed.',true);await refresh();return;}
-  siteKitJob=null;siteKitPlan=await api('/api/site-kit/plan');
+  siteKitJob=null;
+  if(job.store_id!==data.active_store_id){await refresh();showToast(`Page generation finished for ${job.store_name}. Select that store to review or publish it.`);return;}
+  siteKitPlan=await api('/api/site-kit/plan');
   const skipped=job.result?.skipped?.length?` Shopify-managed pages skipped: ${job.result.skipped.join(', ')}.`:'';
   if(data.store.connected){const result=await api('/api/site-kit/publish','POST',{fingerprint:siteKitPlan.fingerprint});siteKitPlan=await api('/api/site-kit/plan');siteKitLastRun=result.failed?`Generated the pages, but publishing stopped at ${result.failed}: ${result.detail}`:`Generated and published ${result.published.length} pages and policies in Shopify.`;}
   else siteKitLastRun=`Generated ${siteKitPlan.pages.length} destination-brand pages. Connect Shopify to publish them.`;
@@ -66,9 +75,43 @@ async function waitForSiteKitGeneration(sourceUrl,onProgress){
  let job=await api('/api/site-kit/prepare-job','POST',{source_url:sourceUrl});
  while(['queued','running'].includes(job.status)){
   onProgress(job.progress+(job.total?` (${job.completed}/${job.total})`:''));
-  await wait(1800);job=await api('/api/site-kit/jobs/'+job.id);
+  await wait(1800);job=await api('/api/jobs/'+job.id);
  }
  if(job.status==='failed')throw new Error(job.error||'Page generation failed.');
+ onProgress(job.progress);return job;
+}
+const catalogRunning = () => ['queued','running'].includes(catalogJob?.status);
+function watchCatalogJob(job){
+ catalogJob=job;productRun=job.progress||'Building and publishing the catalog…';clearTimeout(catalogPollTimer);
+ if(catalogRunning())catalogPollTimer=setTimeout(pollCatalogJob,1800);
+}
+async function pollCatalogJob(){
+ if(!catalogJob?.id)return;
+ try{
+  const job=await api('/api/jobs/'+catalogJob.id);catalogJob=job;productRun=job.progress;
+  if(view==='products'&&data)render();
+  if(catalogRunning()){catalogPollTimer=setTimeout(pollCatalogJob,1800);return;}
+  catalogJob=null;await refresh();
+  if(job.status==='failed'){showToast(job.error||'Catalog generation failed.',true);return;}
+  const count=job.result?.published?.length||job.completed||0;
+  productRun=`Published ${count} products with branded images, inventory, collections, and GMC identifiers.`;
+  showToast(productRun);
+ }catch(error){showToast(error?.message||error,true);catalogPollTimer=setTimeout(pollCatalogJob,5000);}
+}
+async function startCatalogJob(sourceUrl){
+ if(catalogRunning())return;
+ busy=true;
+ try{const job=await api('/api/products/catalog-job','POST',{source_url:sourceUrl});watchCatalogJob(job);render();showToast('Catalog generation started. Follow every product from Task center.');}
+ catch(error){showToast(error?.message||error,true);}
+ finally{busy=false;if(data)render();}
+}
+async function waitForCatalogGeneration(sourceUrl,onProgress){
+ let job=await api('/api/products/catalog-job','POST',{source_url:sourceUrl});
+ while(['queued','running'].includes(job.status)){
+  onProgress(job.progress+(job.total?` (${job.completed}/${job.total})`:''));
+  await wait(1800);job=await api('/api/jobs/'+job.id);
+ }
+ if(job.status==='failed')throw new Error(job.error||'Catalog generation failed.');
  onProgress(job.progress);return job;
 }
 function header(title, subtitle, actions='') {return `<div class="page-head"><div><p class="eyebrow">4GMC / MERCHANT WORKSPACE</p><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div><div class="actions">${actions}</div></div>`}
@@ -83,7 +126,7 @@ function overview(){
 function check(name,done,sub){return `<div class="checkrow"><span class="check-icon ${done?'':'off'}">${done?'✓':'·'}</span><div><strong>${esc(name)}</strong><small>${esc(sub)}</small></div></div>`}
 function products(){
  const source=data.store.product_source_url||'';
- const result=productRun?`<div class="note">${esc(productRun)}</div>`:'';
+ const result=productRun?`<div class="note">${esc(productRun)}${catalogRunning()&&catalogJob.total?` (${catalogJob.completed}/${catalogJob.total})`:''}</div>`:'';
  const list=data.products.length?data.products.map(product=>{
   const g=product.gmc_data||{}, roles=(product.ai_image_manifest||[]).map(item=>item.role);
   const identifier=g.gtin?`GTIN verified`:(g.mpn?`Private-label MPN`:`Identifier needs attention`);
@@ -91,7 +134,7 @@ function products(){
   return `<div class="item product-automation-item"><div><strong>${esc(product.title)}</strong><small>${esc(product.source_title)} · ${esc(product.price?product.price+' '+(data.store.business.currency||'USD'):'Price unavailable')} · ${esc(product.status)}</small><small>${esc(product.collection_title||'Featured Products')} · ${esc(identifier)} · ${esc(inventory)}</small><small>Images: ${esc(roles.length?roles.join(', '):'pending hero, detail, lifestyle')}</small></div>${product.status==='published'?'<span class="tag good">Online Store</span>':''}</div>`;
  }).join(''):'<div class="empty">No products imported yet.</div>';
  return header('Products','Build a curated private-label catalog with consistent branded photography, collections, inventory, and Google Merchant product identification.')+
- `<div class="grid two-col"><div class="grid"><section class="card"><h2>Product source website</h2><p class="sub">4GMC scans the public Shopify catalog, selects up to 20 strong physical products across up to four coherent categories, and keeps one available representative variation per product.</p><form id="product-source-form" class="form-grid"><label class="full">Source website homepage<input id="product-source-url" type="url" value="${esc(source)}" placeholder="https://product-source-store.com" required></label><div class="full actions"><button class="primary" ${data.store.connected&&!busy?'':'disabled'}>Build & publish catalog</button></div></form><p id="catalog-progress" class="helper">${data.store.connected?'Source and destination currencies must match. Products publish automatically after every validation passes.':'Connect your Shopify store before publishing products.'}</p>${result}</section><section class="card"><h2>Automated catalog</h2><p class="sub">${data.products.length} products · ${(data.collections||[]).length} Shopify collections</p><div class="list">${list}</div></section></div><div class="grid"><section class="card"><h2>Automatic product rules</h2>${check('Store connected',data.store.connected,'Required for immediate publication')}${check('Store logo',Boolean(data.store.brand.logo?.digest),'Required in the corner and on realistic product surfaces')}${check('Three-image gallery',data.image_connected,'Every hero, detail, and lifestyle image receives the exact corner logo')}${check('Product fidelity',true,'Construction, materials, controls, colors, and included parts are preserved')}${check('Catalog curation',true,'Maximum 20 physical products in four collections')}${check('Inventory',true,'Exact public quantities are tracked; unknown quantities remain untracked')}${check('GMC identification',true,'GTINs are checksum-tested and never invented; private-label MPNs are stable')}${check('Source facts',true,'Unsupported claims, certifications, and accessories are blocked')}<div class="note">The exact uploaded logo is composited into the top-left corner of every generated image. Gemini may also place it on up to three physically realistic product surfaces. Source barcodes from a different brand are kept only as supplier-confirmation candidates. 4GMC does not submit them as your private-label GTIN.</div></section></div></div>`;
+ `<div class="grid two-col"><div class="grid"><section class="card"><h2>Product source website</h2><p class="sub">4GMC scans the public Shopify catalog, selects up to 20 strong physical products across up to four coherent categories, and keeps one available representative variation per product.</p><form id="product-source-form" class="form-grid"><label class="full">Source website homepage<input id="product-source-url" type="url" value="${esc(source)}" placeholder="https://product-source-store.com" required></label><div class="full actions"><button class="primary" ${data.store.connected&&!busy&&!catalogRunning()?'':'disabled'}>${catalogRunning()?'Catalog running…':'Build & publish catalog'}</button><button type="button" class="secondary" data-view="tasks">Task center</button></div></form><p id="catalog-progress" class="helper">${data.store.connected?'Source and destination currencies must match. Products publish automatically after every validation passes.':'Connect your Shopify store before publishing products.'}</p>${result}</section><section class="card"><h2>Automated catalog</h2><p class="sub">${data.products.length} products · ${(data.collections||[]).length} Shopify collections</p><div class="list">${list}</div></section></div><div class="grid"><section class="card"><h2>Automatic product rules</h2>${check('Store connected',data.store.connected,'Required for immediate publication')}${check('Store logo',Boolean(data.store.brand.logo?.digest),'Required in the corner and on realistic product surfaces')}${check('Three-image gallery',data.image_connected,'Every hero, detail, and lifestyle image receives the exact corner logo')}${check('Product fidelity',true,'Construction, materials, controls, colors, and included parts are preserved')}${check('Catalog curation',true,'Maximum 20 physical products in four collections')}${check('Inventory',true,'Exact public quantities are tracked; unknown quantities remain untracked')}${check('GMC identification',true,'GTINs are checksum-tested and never invented; private-label MPNs are stable')}${check('Source facts',true,'Unsupported claims, certifications, and accessories are blocked')}<div class="note">The exact uploaded logo is composited into the top-left corner of every generated image. Gemini may also place it on up to three physically realistic product surfaces. Source barcodes from a different brand are kept only as supplier-confirmation candidates. 4GMC does not submit them as your private-label GTIN.</div></section></div></div>`;
 }
 function pages(){
  const source=data.store.policy_source_url||'';
@@ -170,11 +213,16 @@ function connections(){
  <section class="card"><h2>Publishing for selected store</h2>${check('Shopify authorization',s.connected,'Connect '+(s.domain||'the destination store'))}${check('Pages, policies and products',s.connected,'Changes publish only to the selected store')}<p class="helper">Shopify authorization requires a public HTTPS app URL and the callback URL registered with your Shopify app.</p></section>
  ${plan}</div>`;
 }
+function tasks(){
+ const jobs=data.jobs||[],active=jobs.filter(job=>['queued','running'].includes(job.status));
+ const cards=jobs.length?jobs.map(job=>{const complete=job.status==='completed',failed=job.status==='failed';const percent=complete?100:job.total?Math.min(100,Math.round(job.completed/job.total*100)):job.status==='running'?8:0;const label=job.kind==='site_kit'?'Brand pages & policies':job.kind==='catalog'?'Products, images & publishing':job.kind;return `<article class="card task-card"><div class="task-head"><div><h2>${esc(label)}</h2><p class="sub">${esc(job.store_name)}${job.store_domain?' · '+esc(job.store_domain):''}</p></div><span class="pill ${complete?'connected':failed?'failed':''}">${esc(job.status)}</span></div><strong class="task-progress-label">${esc(job.progress)}</strong><div class="task-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div><small>${job.total?`${job.completed} of ${job.total} · `:''}${percent}%</small>${job.error?`<div class="task-error">${esc(job.error)}</div>`:''}${job.store_id!==data.active_store_id?`<div class="actions"><button class="secondary" data-action="select-store" data-id="${job.store_id}">Open this store</button></div>`:''}</article>`}).join(''):'<div class="empty">No background tasks yet. Start page or product generation from any store to see its progress here.</div>';
+ return header('Task center','Run work for several stores at the same time and follow every task independently.')+`<div class="grid metrics task-metrics">${metric('Active tasks',active.length,'Running or waiting')}${metric('Parallel capacity',data.task_capacity||4,'Maximum simultaneous jobs')}${metric('Completed',jobs.filter(job=>job.status==='completed').length,'Recent background jobs')}${metric('Failed',jobs.filter(job=>job.status==='failed').length,'Errors remain visible')}</div><section class="card task-settings"><h2>Parallel processing</h2><p class="sub">Choose how many store jobs 4GMC may run at once. Page and catalog jobs are isolated per store, and every job keeps its own progress.</p><form id="task-settings-form" class="actions"><label>Simultaneous jobs<select id="task-capacity">${[1,2,4,6,8].map(value=>`<option value="${value}" ${value===(data.task_capacity||4)?'selected':''}>${value}</option>`).join('')}</select></label><button class="primary">Save capacity</button></form></section><div class="task-list">${cards}</div>`;
+}
 function activity(){return header('Activity','A record of preparation and store changes.')+`<section class="card"><h2>Recent activity</h2>${data.events.length?data.events.map(e=>`<div class="finding"><div class="finding-icon activity-icon">↗</div><div class="finding-main"><strong>${esc(e.message)}</strong><p>${esc(e.created_at)}</p></div></div>`).join(''):'<div class="empty">No activity yet.</div>'}</section>`}
 function render(){
  $('store-domain').textContent=data.store.domain||'No store connected';$('crumb').textContent=names[view];
  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
- $('main').innerHTML=({overview,products,pages,design,business,connections,activity}[view])();
+ $('main').innerHTML=({overview,products,pages,design,business,connections,tasks,activity}[view])();
 }
 async function perform(fn){if(busy)return;busy=true;try{const message=await fn();await refresh();showToast(typeof message==='string'?message:'Saved successfully');}catch(error){showToast(error?.message||error,true);}finally{busy=false;}}
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/login','POST',{password:val('password')});$('password').value='';$('login-error').textContent='';await refresh();}catch(error){$('login-error').textContent=error.message;}});
@@ -242,14 +290,7 @@ document.body.addEventListener('submit',e=>{
     siteKitPlan=await api('/api/site-kit/plan');
    }
    stage('Scanning and curating up to 20 products across four collections…');
-   const catalog=await api('/api/products/catalog','POST',{source_url:productSource});
-   const errors=[];
-   for(let index=0;index<catalog.urls.length;index++){
-    stage('Publishing product '+(index+1)+' of '+catalog.urls.length+' with collection, inventory, GMC identifiers, and three branded images…');
-    try{await api('/api/products/auto-publish','POST',{url:catalog.urls[index]});}
-    catch(error){errors.push(catalog.urls[index].split('/').pop()+': '+error.message);}
-   }
-   if(errors.length)throw new Error(errors.length+' product(s) could not be completed: '+errors.slice(0,3).join(' | '));
+   await waitForCatalogGeneration(productSource,stage);
    stage('Generating the complete storefront preview…');
    const result=await api('/api/storefront/generate','POST');
    previewTab='home';
@@ -258,8 +299,9 @@ document.body.addEventListener('submit',e=>{
  });
  if(form.id==='store-form')perform(async()=>{usaPlan=null;siteKitPlan=null;await api('/api/store','PUT',{name:val('s-name'),domain:data.store.domain,business:{...data.store.business,business_name:val('s-name'),domain_name:val('b-domain-name'),email:val('b-email'),address:val('b-address'),country:val('b-country'),currency:val('b-currency'),phone:val('b-phone')},brand:data.store.brand});return 'Store details saved.';});
  if(form.id==='add-store-form')perform(async()=>{const fields=new FormData(form);await api('/api/stores','POST',{domain:fields.get('domain')});usaPlan=null;siteKitPlan=null;siteKitLastRun='';editPage=editProduct=null;return 'Store added and selected.';});
+ if(form.id==='task-settings-form')perform(async()=>{const result=await api('/api/settings/task-capacity','PUT',{value:Number(val('task-capacity'))});data.task_capacity=result.value;return `Parallel task capacity set to ${result.value}.`;});
  if(form.classList.contains('store-connection-form'))perform(async()=>{const fields=new FormData(form);await api('/api/stores/'+form.dataset.id+'/connection','PUT',{domain:fields.get('domain')});usaPlan=null;return 'Shopify address saved. Authorize or reconnect to publish.';});
- if(form.id==='product-source-form')perform(async()=>{const catalog=await api('/api/products/catalog','POST',{source_url:val('product-source-url')});let done=0;const errors=[];const progress=$('catalog-progress');if(progress)progress.textContent=`Curated ${catalog.urls.length} products into ${catalog.categories.length} collections from ${catalog.discovered} discovered products.`;for(const url of catalog.urls){try{await api('/api/products/auto-publish','POST',{url});done++;}catch(error){errors.push(`${url.split('/').pop()}: ${error.message}`);}const progress=$('catalog-progress');if(progress)progress.textContent=`Processed ${done+errors.length} of ${catalog.urls.length} products. Published ${done}.`; }productRun=`Curated ${catalog.urls.length} products in ${catalog.categories.length} collections; published ${done}.${errors.length?` Issues: ${errors.slice(0,4).join(' | ')}${errors.length>4?` and ${errors.length-4} more`:''}`:''}`;return productRun;});
+ if(form.id==='product-source-form')startCatalogJob(val('product-source-url'));
  if(form.id==='product-form')perform(async()=>{await api(`/api/products/${form.dataset.id}`,'PUT',{title:val('p-title'),description:val('p-description'),price:val('p-price'),sku:val('p-sku'),gtin:val('p-gtin')});return 'Product details saved.';});
  if(form.id==='policy-source-form')startSiteKitJob(val('source-store-url'));
  if(form.id==='page-form')perform(async()=>{await api(`/api/pages/${form.dataset.id}`,'PUT',{kind:val('page-kind'),title:val('page-title'),body:val('page-body')});return 'Page details saved.';});
@@ -277,4 +319,5 @@ if(launchError){
  ),600));
  window.history.replaceState({},document.title,window.location.pathname);
 }
+setInterval(async()=>{if(!data||!(view==='tasks'||(data.jobs||[]).some(job=>['queued','running'].includes(job.status))))return;try{const result=await api('/api/jobs');data.jobs=result.jobs;data.task_capacity=result.capacity;if(view==='tasks')render();}catch{}},2000);
 refresh().catch(error=>showToast(error?.message||error,true));

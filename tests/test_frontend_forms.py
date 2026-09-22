@@ -24,4 +24,13 @@ assert "setTimeout(hideToast,7000)" in source
 
 assert "waitForSiteKitGeneration(pageSource,stage)" in source
 
+assert "function tasks()" in source
+assert "task-progress" in source
+assert "task-settings-form" in source
+assert "api('/api/jobs/'+siteKitJob.id)" in source
+assert "api('/api/products/catalog-job','POST'" in source
+assert 'Products, images & publishing' in source
+assert 'waitForCatalogGeneration(productSource,stage)' in source
+assert 'data-action="select-store"' in source
+
 print('Frontend form submission and notification regression checks passed')

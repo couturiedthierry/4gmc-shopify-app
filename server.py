@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio, base64, binascii, hashlib, hmac, html, ipaddress, json, os, re, secrets, socket, sqlite3, time, uuid
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from io import BytesIO
 from decimal import Decimal, InvalidOperation
@@ -39,7 +39,9 @@ FERNET = Fernet(TOKEN_KEY.encode()) if TOKEN_KEY else None
 SHOPIFY_SCOPES = 'read_products,write_products,read_inventory,write_inventory,read_locations,read_publications,write_publications,read_content,write_content,read_legal_policies,write_legal_policies,read_markets,write_markets,read_shipping,write_shipping'
 SHOPIFY_REFRESH_LOCK = asyncio.Lock()
 USA_SETUP_LOCK = asyncio.Lock()
-SITE_KIT_LOCK = asyncio.Lock()
+SITE_KIT_LOCKS = {}
+TASK_SLOT_CONDITION = asyncio.Condition()
+TASKS_RUNNING = 0
 SITE_KIT_TASKS = set()
 SITE_KIT_JOB_IDS = set()
 if not SESSION_SECRET or not ADMIN_PASSWORD:
@@ -58,6 +60,7 @@ async def prevent_stale_dashboard_assets(request: Request, call_next):
 
 
 ACTIVE_STORE_ID = ContextVar('gmc_active_store_id', default=1)
+BACKGROUND_JOB = ContextVar('gmc_background_job', default=False)
 
 
 @contextmanager
@@ -77,6 +80,37 @@ def ensure_registry():
                   "(id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL DEFAULT '', "
                   "client_secret TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
         c.execute("INSERT OR IGNORE INTO app_stores(id) VALUES(1)")
+        c.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        c.execute("INSERT OR IGNORE INTO app_settings(key,value) VALUES('task_capacity','4')")
+
+
+def task_capacity_value():
+    with registry() as c:
+        c.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        row = c.execute("SELECT value FROM app_settings WHERE key='task_capacity'").fetchone()
+    try:
+        return min(8, max(1, int(row['value'] if row else 4)))
+    except (TypeError, ValueError):
+        return 4
+
+
+@asynccontextmanager
+async def task_slot():
+    global TASKS_RUNNING
+    async with TASK_SLOT_CONDITION:
+        await TASK_SLOT_CONDITION.wait_for(lambda: TASKS_RUNNING < task_capacity_value())
+        TASKS_RUNNING += 1
+    try:
+        yield
+    finally:
+        async with TASK_SLOT_CONDITION:
+            TASKS_RUNNING = max(0, TASKS_RUNNING - 1)
+            TASK_SLOT_CONDITION.notify_all()
+
+
+def site_kit_lock():
+    store_id = ACTIVE_STORE_ID.get()
+    return SITE_KIT_LOCKS.setdefault(store_id, asyncio.Lock())
 
 
 def registered_store(store_id: int) -> bool:
@@ -203,6 +237,10 @@ async def http_exception_response(request: Request, error: HTTPException):
 
 
 def require(request: Request):
+    if request is None:
+        if BACKGROUND_JOB.get():
+            return
+        fail('Sign in to continue', 401)
     cookie = request.cookies.get('gmc_session', '')
     try:
         stamp, signature = cookie.split('.', 1)
@@ -364,6 +402,10 @@ class PageInput(BaseModel):
     body: str = ''
 class SiteKitInput(BaseModel):
     source_url: str = Field(min_length=8, max_length=300)
+
+class TaskCapacityInput(BaseModel):
+    value: int = Field(ge=1, le=8)
+
 
 class SiteKitApplyInput(BaseModel):
     fingerprint: str = Field(min_length=64, max_length=64, pattern=r'^[0-9a-f]{64}$')
@@ -589,6 +631,60 @@ def store_summaries():
     return result
 
 
+def all_store_jobs():
+    stores = {item['id']: item for item in store_summaries()}
+    with registry() as c:
+        ids = [row['id'] for row in c.execute('SELECT id FROM app_stores ORDER BY id')]
+    jobs = []
+    for store_id in ids:
+        path = DB if store_id == 1 else DB.parent / f'studio-store-{store_id}.db'
+        if not path.exists():
+            continue
+        connection = sqlite3.connect(path)
+        connection.row_factory = sqlite3.Row
+        try:
+            ensure_jobs(connection)
+            active_site_kit_job(connection)
+            active_job(connection, 'catalog')
+            rows = connection.execute('SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT 20').fetchall()
+            connection.commit()
+        finally:
+            connection.close()
+        store = stores.get(store_id, {})
+        for row in rows:
+            item = public_job(row)
+            item.update({'store_id': store_id, 'store_name': store.get('name') or f'Store {store_id}',
+                         'store_domain': store.get('domain') or ''})
+            jobs.append(item)
+    jobs.sort(key=lambda item: (item['created_at'], item['id']), reverse=True)
+    return jobs[:50]
+
+
+def find_store_job(job_id):
+    with registry() as c:
+        ids = [row['id'] for row in c.execute('SELECT id FROM app_stores ORDER BY id')]
+    stores = {item['id']: item for item in store_summaries()}
+    for store_id in ids:
+        path = DB if store_id == 1 else DB.parent / f'studio-store-{store_id}.db'
+        if not path.exists():
+            continue
+        connection = sqlite3.connect(path)
+        connection.row_factory = sqlite3.Row
+        try:
+            ensure_jobs(connection)
+            row = connection.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
+            connection.commit()
+        finally:
+            connection.close()
+        if row:
+            item = public_job(row)
+            store = stores.get(store_id, {})
+            item.update({'store_id': store_id, 'store_name': store.get('name') or f'Store {store_id}',
+                         'store_domain': store.get('domain') or ''})
+            return item
+    return None
+
+
 @app.post('/api/stores')
 def create_store(data: NewStoreInput, request: Request):
     require(request)
@@ -697,7 +793,7 @@ def state(request: Request):
     for page in pages:
         page['reviewed'] = page['reviewed_hash'] == page_digest(page) and bool(page['reviewed_hash'])
         page.pop('reviewed_hash', None)
-    return {'store':public_store,'stores':registered,'active_store_id':selected_id,'products':products,'collections':collections,'pages':pages,'events':events,'storefront':storefront,'site_kit_job':site_kit_job,'findings':issues(store,products,pages),'ai_connected':bool(SMARTAPI_KEY),'shopify_ready':bool(client_id and client_secret and FERNET and PUBLIC_URL.startswith('https://')),'image_connected':bool(GEMINI_API_KEY),'gmc_connected':False}
+    return {'store':public_store,'stores':registered,'active_store_id':selected_id,'products':products,'collections':collections,'pages':pages,'events':events,'storefront':storefront,'site_kit_job':site_kit_job,'jobs':all_store_jobs(),'task_capacity':task_capacity_value(),'findings':issues(store,products,pages),'ai_connected':bool(SMARTAPI_KEY),'shopify_ready':bool(client_id and client_secret and FERNET and PUBLIC_URL.startswith('https://')),'image_connected':bool(GEMINI_API_KEY),'gmc_connected':False}
 
 @app.put('/api/store')
 def update_store(data: StoreUpdate, request: Request):
@@ -1440,19 +1536,26 @@ def public_job(row):
     }
 
 
-def active_site_kit_job(c):
+def active_job(c, kind):
     ensure_jobs(c)
     row = c.execute(
-        "SELECT * FROM jobs WHERE kind='site_kit' AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1"
+        "SELECT * FROM jobs WHERE kind=? AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1",
+        (kind,),
     ).fetchone()
     if row and row['id'] not in SITE_KIT_JOB_IDS:
+        label = 'Page generation' if kind == 'site_kit' else 'Catalog generation'
         c.execute(
-            "UPDATE jobs SET status='failed',progress='Page generation was interrupted.',"
-            "error='The service restarted during page generation. Start it again; completed store content was not published.',updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (row['id'],),
+            "UPDATE jobs SET status='failed',progress=?,error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (f'{label} was interrupted.',
+             f'The service restarted during {label.lower()}. Start it again; completed work remains saved.',
+             row['id']),
         )
         return None
     return public_job(row)
+
+
+def active_site_kit_job(c):
+    return active_job(c, 'site_kit')
 
 
 def update_site_kit_job(job_id, status, progress, completed=0, total=0, result=None, error=''):
@@ -1707,7 +1810,7 @@ def validate_brand_page(item, title, body, business, source_host, identities):
 
 
 async def generate_site_kit(data: SiteKitInput, progress=None):
-    async with SITE_KIT_LOCK:
+    async with site_kit_lock():
         with db() as c:
             store = store_row(c)
             business = json.loads(store['business'])
@@ -1861,13 +1964,15 @@ async def run_site_kit_job(job_id, store_id, data):
         update_site_kit_job(job_id, 'running', message, done, count)
 
     try:
-        update_site_kit_job(job_id, 'running', 'Starting page generation…')
-        plan = await generate_site_kit(data, report)
-        update_site_kit_job(
-            job_id, 'completed', f'Generated {len(plan["pages"])} destination-brand pages.',
-            len(plan['pages']), len(plan['pages']),
-            {'pages': len(plan['pages']), 'skipped': plan.get('skipped', [])},
-        )
+        update_site_kit_job(job_id, 'queued', 'Waiting for an available parallel task slot…')
+        async with task_slot():
+            update_site_kit_job(job_id, 'running', 'Starting page generation…')
+            plan = await generate_site_kit(data, report)
+            update_site_kit_job(
+                job_id, 'completed', f'Generated {len(plan["pages"])} destination-brand pages.',
+                len(plan['pages']), len(plan['pages']),
+                {'pages': len(plan['pages']), 'skipped': plan.get('skipped', [])},
+            )
     except HTTPException as error:
         message = error.detail if isinstance(error.detail, str) else json.dumps(error.detail, ensure_ascii=False)
         update_site_kit_job(job_id, 'failed', 'Page generation stopped.', completed, total, error=message)
@@ -1899,11 +2004,146 @@ async def start_site_kit_job(data: SiteKitInput, request: Request):
             (job_id, 'site_kit', 'queued', 'Waiting to start page generation…'),
         )
         job = public_job(c.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone())
+        store = store_row(c)
+        job.update({'store_id': store_id, 'store_name': store['name'], 'store_domain': store['domain']})
     SITE_KIT_JOB_IDS.add(job_id)
     task = asyncio.create_task(run_site_kit_job(job_id, store_id, data))
     SITE_KIT_TASKS.add(task)
     task.add_done_callback(SITE_KIT_TASKS.discard)
     return job
+
+
+async def run_catalog_job(job_id, store_id, data):
+    store_context = ACTIVE_STORE_ID.set(store_id)
+    background_context = BACKGROUND_JOB.set(True)
+    completed = 0
+    total = 0
+    failures = []
+    try:
+        update_site_kit_job(job_id, 'queued', 'Waiting for an available parallel task slot…')
+        async with task_slot():
+            update_site_kit_job(job_id, 'running', 'Scanning and curating the source catalog…')
+            catalog = await source_catalog(data, None)
+            total = len(catalog['urls'])
+            update_site_kit_job(job_id, 'running', f'Curated {total} products. Starting product generation…', 0, total)
+            published = []
+            for index, url in enumerate(catalog['urls'], 1):
+                handle = url.rstrip('/').rsplit('/', 1)[-1]
+                update_site_kit_job(
+                    job_id, 'running',
+                    f'Preparing product {index} of {total}: {handle}. AI copy, GMC data, images, inventory, collection, and Shopify publishing are automatic.',
+                    completed, total,
+                )
+                try:
+                    result = await auto_publish_source_product(ImportInput(url=url), None)
+                    published.append({'id': result['id'], 'title': result['title'], 'url': url})
+                except HTTPException as error:
+                    message = error.detail if isinstance(error.detail, str) else json.dumps(error.detail, ensure_ascii=False)
+                    failures.append({'url': url, 'error': message})
+                except Exception as error:
+                    print(f'Catalog product {url} failed: {type(error).__name__}: {error}', flush=True)
+                    failures.append({'url': url, 'error': f'Unexpected {type(error).__name__}; check Render logs.'})
+                completed = index
+                update_site_kit_job(
+                    job_id, 'running',
+                    f'Processed {completed} of {total} products; {len(published)} published and {len(failures)} failed.',
+                    completed, total,
+                    {'published': published, 'failures': failures, 'categories': catalog['categories']},
+                )
+            result = {'published': published, 'failures': failures, 'categories': catalog['categories'],
+                      'discovered': catalog['discovered'], 'scanned': catalog['scanned']}
+            if failures:
+                summary = '; '.join(f"{item['url'].rstrip('/').rsplit('/', 1)[-1]}: {item['error']}" for item in failures[:4])
+                if len(failures) > 4:
+                    summary += f'; and {len(failures) - 4} more'
+                update_site_kit_job(
+                    job_id, 'failed',
+                    f'Catalog finished with {len(published)} published and {len(failures)} failed products.',
+                    completed, total, result, summary,
+                )
+            else:
+                update_site_kit_job(
+                    job_id, 'completed', f'Published all {len(published)} curated products.',
+                    total, total, result,
+                )
+    except HTTPException as error:
+        message = error.detail if isinstance(error.detail, str) else json.dumps(error.detail, ensure_ascii=False)
+        update_site_kit_job(job_id, 'failed', 'Catalog generation stopped.', completed, total, error=message)
+        with db() as c:
+            event(c, 1, 'Catalog generation failed: ' + message[:300])
+    except Exception as error:
+        message = f'Catalog generation stopped unexpectedly ({type(error).__name__}). Check the Render logs and retry.'
+        print(f'Catalog job {job_id} failed: {type(error).__name__}: {error}', flush=True)
+        update_site_kit_job(job_id, 'failed', 'Catalog generation stopped.', completed, total, error=message)
+        with db() as c:
+            event(c, 1, message)
+    finally:
+        SITE_KIT_JOB_IDS.discard(job_id)
+        BACKGROUND_JOB.reset(background_context)
+        ACTIVE_STORE_ID.reset(store_context)
+
+
+@app.post('/api/products/catalog-job', status_code=202)
+async def start_catalog_job(data: CatalogInput, request: Request):
+    require(request)
+    store_id = ACTIVE_STORE_ID.get()
+    with db() as c:
+        ensure_jobs(c)
+        existing = active_job(c, 'catalog')
+        if existing:
+            store = store_row(c)
+            existing.update({'store_id': store_id, 'store_name': store['name'], 'store_domain': store['domain']})
+            return existing
+        store = store_row(c)
+        if not store_connected(store):
+            fail('Connect this Shopify store before building its catalog')
+        brand = json.loads(store['brand'] or '{}')
+        if not isinstance(brand.get('logo'), dict):
+            fail('Upload this store logo before generating branded product images')
+        if not SMARTAPI_KEY:
+            fail('Configure Claude before generating product copy')
+        if not GEMINI_API_KEY:
+            fail('Configure Gemini before generating product images')
+        job_id = uuid.uuid4().hex
+        c.execute(
+            "INSERT INTO jobs(id,kind,status,progress) VALUES(?,?,?,?)",
+            (job_id, 'catalog', 'queued', 'Waiting to scan the product source…'),
+        )
+        job = public_job(c.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone())
+        job.update({'store_id': store_id, 'store_name': store['name'], 'store_domain': store['domain']})
+    SITE_KIT_JOB_IDS.add(job_id)
+    task = asyncio.create_task(run_catalog_job(job_id, store_id, data))
+    SITE_KIT_TASKS.add(task)
+    task.add_done_callback(SITE_KIT_TASKS.discard)
+    return job
+
+
+@app.get('/api/jobs')
+def get_jobs(request: Request):
+    require(request)
+    return {'capacity': task_capacity_value(), 'running': TASKS_RUNNING, 'jobs': all_store_jobs()}
+
+
+@app.get('/api/jobs/{job_id}')
+def get_job(job_id: str, request: Request):
+    require(request)
+    if not re.fullmatch(r'[0-9a-f]{32}', job_id):
+        fail('Task not found', 404)
+    job = find_store_job(job_id)
+    if not job:
+        fail('Task not found', 404)
+    return job
+
+
+@app.put('/api/settings/task-capacity')
+async def set_task_capacity(data: TaskCapacityInput, request: Request):
+    require(request)
+    with registry() as c:
+        c.execute("INSERT INTO app_settings(key,value) VALUES('task_capacity',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                  (str(data.value),))
+    async with TASK_SLOT_CONDITION:
+        TASK_SLOT_CONDITION.notify_all()
+    return {'value': data.value}
 
 
 @app.get('/api/site-kit/jobs/{job_id}')
@@ -1929,7 +2169,7 @@ def get_site_kit_plan(request: Request):
 @app.post('/api/site-kit/publish')
 async def publish_site_kit(data: SiteKitApplyInput, request: Request):
     require(request)
-    async with SITE_KIT_LOCK:
+    async with site_kit_lock():
         with db() as c:
             plan = site_kit_plan(c)
             if data.fingerprint != plan['fingerprint']:
