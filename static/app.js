@@ -106,20 +106,17 @@ function connections(){
   <div class="store-card-head"><div><h2>${esc(store.name||store.domain||'New store')}</h2><p class="sub">${esc(store.domain||'Add a Shopify address')}</p></div><span class="pill ${store.connected?'connected':''}">${store.connected?'Connected':store.id===active?'Selected':'Not connected'}</span></div>
   <form class="form-grid store-connection-form" data-id="${store.id}">
    <label class="full">Shopify admin address<input name="domain" value="${esc(store.domain||'')}" placeholder="your-store.myshopify.com" required></label>
-   <label class="full">Client ID<input name="client_id" value="${esc(store.client_id||'')}" autocomplete="off" required></label>
-   <label class="full">Client Secret<input name="client_secret" type="password" placeholder="${store.has_secret?'Saved - leave blank to keep':'Enter Client Secret'}" autocomplete="new-password" ${store.has_secret?'':'required'}></label>
    <div class="full actions"><button class="secondary">Save details</button>${store.id===active?'':`<button type="button" class="secondary" data-action="select-store" data-id="${store.id}">Use this store</button>`}</div>
   </form>
   ${store.id===active?`<div class="actions store-actions"><button class="primary" data-action="connect-shopify" ${data.shopify_ready&&store.domain?'':'disabled'}>${store.connected?'Reconnect Shopify':'Connect Shopify'}</button><button class="secondary" data-action="review-usa" ${store.connected?'':'disabled'}>Review USA setup</button></div>`:''}
  </section>`).join('');
- const addCard=`<section class="card add-store-card"><h2>+ Add one more store</h2><p class="sub">Create another independent store workspace. Add as many stores as you need.</p><form id="add-store-form" class="form-grid">
+ const addCard=`<section class="card add-store-card"><h2>+ Add one more store</h2><p class="sub">Add another store address. The same secure 4GMC Shopify application authorizes every store.</p><form id="add-store-form" class="form-grid">
   <label class="full">Shopify admin address<input name="domain" placeholder="another-store.myshopify.com" required></label>
-  <label class="full">Client ID<input name="client_id" autocomplete="off" required></label>
-  <label class="full">Client Secret<input name="client_secret" type="password" autocomplete="new-password" required></label>
   <div class="full actions"><button class="primary">Add store</button></div>
  </form></section>`;
  const plan=usaPlan?`<section class="card full"><h2>USA setup review</h2><p class="helper">Current Shopify name: ${esc(usaPlan.shop.name)} · Customer email: ${esc(usaPlan.shop.contactEmail)}</p><p class="sub">Shopify reports ${esc(usaPlan.shipping_system==='markets'?'market-based':'delivery-profile')} shipping. Applying this plan will pause ${usaPlan.markets_to_pause.length} other active region market(s) and replace ${usaPlan.shipping_to_replace} existing shipping zone(s) or option(s).</p>${check('Target market',true,'United States only · USD')}${check('Shipping',true,'Free at checkout · USD 0.00')}${usaPlan.manual_steps.length?`<div class="note"><strong>Shopify settings that require the store owner:</strong><br>${usaPlan.manual_steps.map(esc).join('<br>')}</div>`:''}<div class="actions"><button class="primary" data-action="apply-usa">Apply USA market & free shipping</button><button class="secondary" data-action="review-usa">Refresh review</button></div></section>`:'';
- return header('Connections','Select a store, save its app credentials, then authorize publishing to that store.')+
+ return header('Connections','Select a store address, then authorize the shared 4GMC Shopify app to publish there.')+
+ `<div class="note"><strong>One Shopify app for every store.</strong><br>The Client ID and Client Secret are stored once in Render. Each store receives its own encrypted access token after you click Connect Shopify.</div>`+
  `<div class="store-cards">${storeCards}${addCard}</div>
  <div class="grid two-col connection-extras">
  <section class="card"><h2>Claude Fable 5</h2><p class="sub">Used to prepare product copy and page drafts.</p><span class="pill ${data.ai_connected?'connected':''}">${data.ai_connected?'Configured':'Not configured'}</span><p class="helper">SmartAPI · Anthropic-compatible API · claude-fable-5</p><div class="section-line"></div><h2>Image generation</h2><p class="sub">Gemini 3.1 Flash Image creates branded product mockups.</p><span class="pill ${data.image_connected?'connected':''}">${data.image_connected?'Configured':'Not configured'}</span></section>
@@ -209,11 +206,19 @@ document.body.addEventListener('submit',e=>{
   }catch(error){stage('Stopped: '+error.message);throw error;}
  });
  if(form.id==='store-form')perform(()=>{usaPlan=null;siteKitPlan=null;return api('/api/store','PUT',{name:val('s-name'),domain:data.store.domain,business:{...data.store.business,business_name:val('s-name'),domain_name:val('b-domain-name'),email:val('b-email'),address:val('b-address'),country:val('b-country'),currency:val('b-currency'),phone:val('b-phone')},brand:data.store.brand})});
- if(form.id==='add-store-form')perform(async()=>{const fields=new FormData(form);await api('/api/stores','POST',{domain:fields.get('domain'),client_id:fields.get('client_id'),client_secret:fields.get('client_secret')});usaPlan=null;siteKitPlan=null;siteKitLastRun='';editPage=editProduct=null;return 'Store added and selected.';});
- if(form.classList.contains('store-connection-form'))perform(async()=>{const fields=new FormData(form);await api('/api/stores/'+form.dataset.id+'/connection','PUT',{domain:fields.get('domain'),client_id:fields.get('client_id'),client_secret:fields.get('client_secret')});usaPlan=null;return 'Shopify details saved. Authorize or reconnect to publish.';});
+ if(form.id==='add-store-form')perform(async()=>{const fields=new FormData(form);await api('/api/stores','POST',{domain:fields.get('domain')});usaPlan=null;siteKitPlan=null;siteKitLastRun='';editPage=editProduct=null;return 'Store added and selected.';});
+ if(form.classList.contains('store-connection-form'))perform(async()=>{const fields=new FormData(form);await api('/api/stores/'+form.dataset.id+'/connection','PUT',{domain:fields.get('domain')});usaPlan=null;return 'Shopify address saved. Authorize or reconnect to publish.';});
  if(form.id==='product-source-form')perform(async()=>{const catalog=await api('/api/products/catalog','POST',{source_url:val('product-source-url')});let done=0;const errors=[];const progress=$('catalog-progress');if(progress)progress.textContent=`Curated ${catalog.urls.length} products into ${catalog.categories.length} collections from ${catalog.discovered} discovered products.`;for(const url of catalog.urls){try{await api('/api/products/auto-publish','POST',{url});done++;}catch(error){errors.push(`${url.split('/').pop()}: ${error.message}`);}const progress=$('catalog-progress');if(progress)progress.textContent=`Processed ${done+errors.length} of ${catalog.urls.length} products. Published ${done}.`; }productRun=`Curated ${catalog.urls.length} products in ${catalog.categories.length} collections; published ${done}.${errors.length?` Issues: ${errors.slice(0,4).join(' | ')}${errors.length>4?` and ${errors.length-4} more`:''}`:''}`;return productRun;});
  if(form.id==='product-form')perform(()=>api(`/api/products/${form.dataset.id}`,'PUT',{title:val('p-title'),description:val('p-description'),price:val('p-price'),sku:val('p-sku'),gtin:val('p-gtin')}));
  if(form.id==='policy-source-form')perform(async()=>{siteKitPlan=await api('/api/site-kit/prepare','POST',{source_url:val('source-store-url')});const skipped=siteKitPlan.skipped?.length?` Shopify-managed pages skipped: ${siteKitPlan.skipped.join(', ')}.`:'';if(data.store.connected){const result=await api('/api/site-kit/publish','POST',{fingerprint:siteKitPlan.fingerprint});siteKitPlan=await api('/api/site-kit/plan');siteKitLastRun=result.failed?`Published ${result.published.length} documents; stopped at ${result.failed}: ${result.detail}`:`Published ${result.published.length} pages and policies in Shopify.`;return siteKitLastRun+skipped;}siteKitLastRun=`Generated ${siteKitPlan.pages.length} destination-brand pages. Connect Shopify to publish them.`;return siteKitLastRun+skipped;});
  if(form.id==='page-form')perform(()=>api(`/api/pages/${form.dataset.id}`,'PUT',{kind:val('page-kind'),title:val('page-title'),body:val('page-body')}));
 });
+const launchParams=new URLSearchParams(window.location.search);
+if(launchParams.has('shop')&&launchParams.has('host')){
+ view='connections';
+ window.addEventListener('load',()=>setTimeout(()=>showToast(
+  'Shopify opened 4GMC without an API token. Publish the app as non-embedded with Legacy install flow enabled, then click Connect Shopify.'
+ ),600));
+ window.history.replaceState({},document.title,window.location.pathname);
+}
 refresh();

@@ -32,9 +32,18 @@ App URL: https://YOUR_APP_DOMAIN
 Allowed redirect URL: https://YOUR_APP_DOMAIN/api/shopify/callback
 ```
 
-Set `PUBLIC_URL` to the same origin. In **Connections**, add the destination `.myshopify.com` address and authorize the store. Existing `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET` environment variables remain the fallback credentials for the first store.
+4GMC is a standalone application and uses Shopify's authorization-code grant. Publish the Shopify app version with:
+
+- **Embed app in Shopify admin:** off;
+- **Use legacy install flow:** on;
+- the required access scopes listed in `SHOPIFY_SCOPES` in `server.py`;
+- the callback URL above.
+
+Set `PUBLIC_URL` to the same origin. Store one `SHOPIFY_CLIENT_ID` and one `SHOPIFY_CLIENT_SECRET` in Render for the whole 4GMC application. In **Connections**, each destination only needs its `.myshopify.com` address and its own authorization. Never create a separate Shopify app or copy a Client Secret into a store card.
 
 The app currently requests product, inventory, location, publication, content, legal-policy, market, and shipping scopes. A store must reconnect after new required scopes are added.
+
+If Shopify opens the app at `/?shop=...&host=...` without calling `/api/shopify/callback`, the Shopify version is using managed embedded installation. Correct the two version switches above and publish that version before reconnecting.
 
 ## Automated content workflow
 

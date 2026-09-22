@@ -74,19 +74,25 @@ def registered_store(store_id: int) -> bool:
 
 
 def store_credentials(store_id: int | None = None):
+    # One Shopify application is installed on every destination store. Render owns
+    # its credentials; individual workspaces only keep the resulting store token.
+    if SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET:
+        return SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET
+    # Keep old encrypted per-store credentials readable so existing local data is
+    # not stranded while a deployment moves to the shared application settings.
     store_id = store_id or ACTIVE_STORE_ID.get()
     with registry() as c:
         row = c.execute('SELECT client_id,client_secret FROM app_stores WHERE id=?', (store_id,)).fetchone()
     if not row:
         return '', ''
-    client_id = row['client_id'] or (SHOPIFY_CLIENT_ID if store_id == 1 else '')
+    client_id = row['client_id']
     if row['client_secret']:
         try:
             secret = FERNET.decrypt(row['client_secret'].encode()).decode()
         except (InvalidToken, AttributeError):
             fail('Saved Shopify app secret could not be unlocked')
     else:
-        secret = SHOPIFY_CLIENT_SECRET if store_id == 1 else ''
+        secret = ''
     return client_id, secret
 
 
@@ -209,10 +215,18 @@ def row_json(row, fields=()):
 def store_row(c):
     return c.execute('SELECT * FROM stores WHERE id=1').fetchone()
 
+def scope_set(value):
+    return {item.strip() for item in str(value or '').split(',') if item.strip()}
+
+
 def store_connected(row):
-    return bool(row['shopify_token'] and row['shopify_refresh_token'] and
-                row['shopify_refresh_expires_at'] > time.time() and FERNET and
-                set(SHOPIFY_SCOPES.split(',')).issubset(set(row['shopify_scopes'].split(','))))
+    if not row['shopify_token'] or not FERNET or not scope_set(SHOPIFY_SCOPES).issubset(scope_set(row['shopify_scopes'])):
+        return False
+    # Expiring offline tokens have a refresh token. Merchant-created/custom apps
+    # can still return a permanent offline token, represented by zero expiries.
+    if row['shopify_refresh_token']:
+        return row['shopify_refresh_expires_at'] > time.time()
+    return row['shopify_expires_at'] == 0 and row['shopify_refresh_expires_at'] == 0
 
 def decrypt_token(value):
     try:
@@ -223,18 +237,29 @@ def decrypt_token(value):
 def token_pair(payload):
     try:
         access = str(payload['access_token'])
-        refresh = str(payload['refresh_token'])
+    except (KeyError, TypeError, ValueError):
+        fail('Shopify did not return an access token',502)
+    if not access:
+        fail('Shopify returned an empty access token',502)
+    refresh = str(payload.get('refresh_token') or '')
+    if not refresh:
+        if payload.get('expires_in') or payload.get('refresh_token_expires_in'):
+            fail('Shopify returned incomplete token expiry details',502)
+        return access, '', 0, 0
+    try:
         expires_in = int(payload['expires_in'])
         refresh_expires_in = int(payload['refresh_token_expires_in'])
     except (KeyError, TypeError, ValueError):
         fail('Shopify did not return a complete expiring token pair',502)
-    if not access or not refresh or expires_in <= 120 or refresh_expires_in <= 0:
+    if expires_in <= 120 or refresh_expires_in <= 0:
         fail('Shopify returned invalid token expiry details',502)
     return access,refresh,int(time.time()+expires_in),int(time.time()+refresh_expires_in)
 
 async def token_for(row):
     if not store_connected(row):
         fail('Shopify needs to be connected or reconnected')
+    if not row['shopify_refresh_token']:
+        return decrypt_token(row['shopify_token'])
     if row['shopify_expires_at'] > time.time()+120:
         return decrypt_token(row['shopify_token'])
     async with SHOPIFY_REFRESH_LOCK:
@@ -281,13 +306,15 @@ class StoreUpdate(BaseModel):
     brand: dict = Field(default_factory=dict)
 class NewStoreInput(BaseModel):
     domain: str = Field(min_length=8, max_length=100)
-    client_id: str = Field(min_length=1, max_length=200)
-    client_secret: str = Field(min_length=1, max_length=300)
+    # Accepted for backwards compatibility with older local dashboards.
+    client_id: str = Field(default='', max_length=200)
+    client_secret: str = Field(default='', max_length=300)
 
 
 class StoreConnectionInput(BaseModel):
     domain: str = Field(min_length=8, max_length=100)
-    client_id: str = Field(min_length=1, max_length=200)
+    # Shared credentials belong in the server environment, never in this form.
+    client_id: str = Field(default='', max_length=200)
     client_secret: str = Field(default='', max_length=300)
 
 
@@ -533,8 +560,6 @@ def store_summaries():
                 result.append({
                     'id': store_id, 'name': row['name'], 'domain': row['domain'],
                     'connected': store_connected(row),
-                    'client_id': entry['client_id'] or (SHOPIFY_CLIENT_ID if store_id == 1 else ''),
-                    'has_secret': bool(entry['client_secret'] or (SHOPIFY_CLIENT_SECRET if store_id == 1 else '')),
                 })
         finally:
             connection.close()
@@ -546,13 +571,16 @@ def create_store(data: NewStoreInput, request: Request):
     require(request)
     domain = valid_shopify_domain(data.domain)
     client_id, secret = data.client_id.strip(), data.client_secret.strip()
-    if not client_id or not secret or not FERNET:
-        fail('Enter both Shopify app credentials and configure token encryption')
+    if not FERNET:
+        fail('Configure token encryption before adding stores')
+    if not (SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET) and not (client_id and secret):
+        fail('Configure the shared Shopify Client ID and Secret in Render')
     if any(item['domain'] == domain for item in store_summaries()):
         fail('This Shopify store is already in your workspace', 409)
+    encrypted = FERNET.encrypt(secret.encode()).decode() if secret else ''
     with registry() as c:
         store_id = c.execute('INSERT INTO app_stores(client_id,client_secret) VALUES(?,?)',
-                             (client_id, FERNET.encrypt(secret.encode()).decode())).lastrowid
+                             (client_id, encrypted)).lastrowid
     context = ACTIVE_STORE_ID.set(store_id)
     try:
         init()
@@ -588,20 +616,21 @@ def save_store_connection(store_id: int, data: StoreConnectionInput, request: Re
         fail('Store not found', 404)
     domain = valid_shopify_domain(data.domain)
     client_id = data.client_id.strip()
-    if not client_id:
-        fail('Enter the Shopify Client ID')
     if any(item['domain'] == domain and item['id'] != store_id for item in store_summaries()):
         fail('This Shopify address is already assigned to another store', 409)
     with registry() as c:
         previous = c.execute('SELECT client_id,client_secret FROM app_stores WHERE id=?', (store_id,)).fetchone()
         secret = data.client_secret.strip()
-        if secret and not FERNET:
+        if (client_id or secret) and not FERNET:
             fail('Configure token encryption before saving a Client Secret')
+        saved_id = client_id or previous['client_id']
         encrypted = FERNET.encrypt(secret.encode()).decode() if secret else previous['client_secret']
-        if not encrypted and not (store_id == 1 and SHOPIFY_CLIENT_SECRET):
-            fail('Enter the Shopify Client Secret')
-        credentials_changed = client_id != (previous['client_id'] or (SHOPIFY_CLIENT_ID if store_id == 1 else '')) or bool(secret)
-        c.execute('UPDATE app_stores SET client_id=?,client_secret=? WHERE id=?', (client_id, encrypted, store_id))
+        if not (SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET) and not (saved_id and encrypted):
+            fail('Configure the shared Shopify Client ID and Secret in Render')
+        credentials_changed = bool(client_id and client_id != previous['client_id']) or bool(secret)
+        if client_id or secret:
+            c.execute('UPDATE app_stores SET client_id=?,client_secret=? WHERE id=?',
+                      (saved_id, encrypted, store_id))
     context = ACTIVE_STORE_ID.set(store_id)
     try:
         with db() as c:
@@ -1942,6 +1971,9 @@ async def shopify_callback(request:Request):
     expected=hmac.new(client_secret.encode(),message.encode(),hashlib.sha256).hexdigest()
     if not received or not hmac.compare_digest(received,expected):
         fail('Shopify signature mismatch',403)
+    if params.get('error'):
+        detail = str(params.get('error_description') or params['error']).strip()
+        fail('Shopify authorization was not approved: ' + detail, 403)
     with db() as c: domain=store_row(c)['domain']
     if params.get('shop') != domain:
         fail('Shopify store mismatch',403)
@@ -1953,19 +1985,27 @@ async def shopify_callback(request:Request):
                 headers={'Accept':'application/json'})
     except httpx.RequestError:
         fail('Shopify token exchange could not be reached',502)
-    if response.status_code != 200: fail('Shopify token exchange failed',502)
+    if response.status_code != 200:
+        try:
+            error_payload = response.json()
+            reason = str(error_payload.get('error_description') or error_payload.get('error') or '').strip()
+        except (ValueError, AttributeError):
+            reason = ''
+        fail('Shopify token exchange failed' + (': ' + reason if reason else ''),502)
     try:
         payload=response.json()
     except ValueError:
         fail('Shopify returned an invalid token response',502)
     access,refresh,expires_at,refresh_expires_at=token_pair(payload)
-    granted=set(str(payload.get('scope','')).split(','))
+    granted=scope_set(payload.get('scope',''))
     if not set(SHOPIFY_SCOPES.split(',')).issubset(granted):
         fail('Shopify did not grant all required permissions',403)
+    encrypted_refresh = FERNET.encrypt(refresh.encode()).decode() if refresh else ''
     with db() as c:
         c.execute('UPDATE stores SET shopify_token=?,shopify_refresh_token=?,shopify_expires_at=?,shopify_refresh_expires_at=?,shopify_scopes=? WHERE id=1',
-            (FERNET.encrypt(access.encode()).decode(),FERNET.encrypt(refresh.encode()).decode(),expires_at,refresh_expires_at,','.join(sorted(granted))))
-        event(c,1,'Shopify store connected with renewable access')
+            (FERNET.encrypt(access.encode()).decode(),encrypted_refresh,expires_at,refresh_expires_at,','.join(sorted(granted))))
+        event(c,1,'Shopify store connected with ' +
+              ('renewable access' if refresh else 'permanent offline access'))
     result=RedirectResponse('/')
     result.set_cookie('gmc_store_id',str(store_id),httponly=True,
                       secure=PUBLIC_URL.startswith('https:'),samesite='lax',max_age=604800)

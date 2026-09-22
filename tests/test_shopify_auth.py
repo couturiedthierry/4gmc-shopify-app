@@ -68,7 +68,15 @@ async def exercise():
         assert await server.token_for(row) == 'new-access'
         assert len(calls) == 1
         with server.db() as c:
-            c.execute('UPDATE stores SET shopify_expires_at=? WHERE id=1', (int(time.time()+30),))
+            c.execute('UPDATE stores SET shopify_token=?,shopify_refresh_token=?,shopify_expires_at=?,shopify_refresh_expires_at=? WHERE id=1',
+                      (server.FERNET.encrypt(b'permanent-access').decode(), '', 0, 0))
+            permanent = server.store_row(c)
+        assert server.store_connected(permanent)
+        assert await server.token_for(permanent) == 'permanent-access'
+        assert len(calls) == 1
+        with server.db() as c:
+            c.execute('UPDATE stores SET shopify_token=?,shopify_refresh_token=?,shopify_expires_at=?,shopify_refresh_expires_at=? WHERE id=1',
+                      (server.FERNET.encrypt(b'new-access').decode(), server.FERNET.encrypt(b'new-refresh').decode(), int(time.time()+30), int(time.time()+7200)))
             row = server.store_row(c)
         with patch.object(server.httpx, 'AsyncClient', lambda **kw: FakeClient(FakeResponse(401), calls)):
             try:
