@@ -29,7 +29,7 @@ async function api(path, method='GET', body) {
 }
 async function refresh(){
   try{data=await api('/api/state');if(data.store.policy_source_url){try{siteKitPlan=await api('/api/site-kit/plan');}catch{siteKitPlan=null;}}$('login').classList.add('hidden');$('app').classList.remove('hidden');render();}
-  catch(error){if(error.message==='Sign in to continue'){$('login').classList.remove('hidden');$('app').classList.add('hidden');}else showToast(error.message);}
+  catch(error){if(error.message==='Sign in to continue'){$('login').classList.remove('hidden');$('app').classList.add('hidden');return;}throw error;}
 }
 function header(title, subtitle, actions='') {return `<div class="page-head"><div><p class="eyebrow">4GMC / MERCHANT WORKSPACE</p><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div><div class="actions">${actions}</div></div>`}
 function metric(label,value,sub){return `<div class="metric"><small>${esc(label)}</small><strong>${esc(value)}</strong><span>${esc(sub)}</span></div>`}
@@ -137,7 +137,10 @@ function render(){
 }
 async function perform(fn){if(busy)return;busy=true;try{const message=await fn();await refresh();showToast(typeof message==='string'?message:'Saved successfully');}catch(error){showToast(error?.message||error);}finally{busy=false;}}
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/login','POST',{password:val('password')});$('password').value='';$('login-error').textContent='';await refresh();}catch(error){$('login-error').textContent=error.message;}});
-for(const id of ['logout','mobile-logout']) $(id).addEventListener('click',async()=>{await api('/api/logout','POST');data=null;await refresh();});
+for(const id of ['logout','mobile-logout']) $(id).addEventListener('click',async()=>{
+ try{await api('/api/logout','POST');data=null;await refresh();}
+ catch(error){showToast(error?.message||error);}
+});
 document.body.addEventListener('click',e=>{
  const nav=e.target.closest('[data-view]');if(nav){view=nav.dataset.view;editPage=editProduct=null;render();return;}
  const previewButton=e.target.closest('[data-preview-tab]');if(previewButton){previewTab=previewButton.dataset.previewTab;render();return;}
@@ -220,11 +223,16 @@ document.body.addEventListener('submit',e=>{
  if(form.id==='page-form')perform(async()=>{await api(`/api/pages/${form.dataset.id}`,'PUT',{kind:val('page-kind'),title:val('page-title'),body:val('page-body')});return 'Page details saved.';});
 });
 const launchParams=new URLSearchParams(window.location.search);
-if(launchParams.has('shop')&&launchParams.has('host')){
+const launchError=launchParams.get('shopify_error');
+if(launchError){
+ view='connections';
+ window.addEventListener('load',()=>setTimeout(()=>showToast(launchError),600));
+ window.history.replaceState({},document.title,window.location.pathname);
+}else if(launchParams.has('shop')&&launchParams.has('host')){
  view='connections';
  window.addEventListener('load',()=>setTimeout(()=>showToast(
   'Shopify opened 4GMC without an API token. Publish the app as non-embedded with Legacy install flow enabled, then click Connect Shopify.'
  ),600));
  window.history.replaceState({},document.title,window.location.pathname);
 }
-refresh();
+refresh().catch(error=>showToast(error?.message||error));

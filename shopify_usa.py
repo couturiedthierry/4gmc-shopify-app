@@ -179,9 +179,9 @@ def build_plan(context, shipping, store):
             raise ValueError('Shopify returned no merchant shipping profiles to update.')
     manual = []
     if shop.get('name', '').strip() != desired_name:
-        manual.append(f"Shopify store name is '{shop.get('name','')}', but the workspace says '{desired_name}'. Only the merchant can change the actual name in Shopify Settings â†’ General.")
+        manual.append(f"Shopify store name is '{shop.get('name','')}', but the workspace says '{desired_name}'. Only the merchant can change the actual name in Shopify Settings → General.")
     if shop.get('contactEmail', '').casefold() != desired_email.casefold():
-        manual.append('Shopify customer contact email differs from the workspace. Only the merchant can change it in Shopify Settings â†’ Notifications or General.')
+        manual.append('Shopify customer contact email differs from the workspace. Only the merchant can change it in Shopify Settings → Notifications or General.')
     plan = {'shop': {'name':shop.get('name'), 'contactEmail':shop.get('contactEmail'), 'currencyCode':shop.get('currencyCode')},
             'target': {'country':'US', 'currency':'USD', 'shipping':'Free shipping (USD 0.00)'},
             'shipping_system':'markets' if market_shipping else 'delivery_profiles',

@@ -15,7 +15,7 @@ import image_pipeline
 import catalog_rules
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from PIL import Image, UnidentifiedImageError
@@ -45,6 +45,15 @@ if not SESSION_SECRET or not ADMIN_PASSWORD:
 
 app = FastAPI(title='4GMC', docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=ROOT / 'static'), name='static')
+
+
+@app.middleware('http')
+async def prevent_stale_dashboard_assets(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path == '/' or request.url.path.startswith('/static/'):
+        response.headers['Cache-Control'] = 'no-cache, must-revalidate'
+    return response
+
 
 ACTIVE_STORE_ID = ContextVar('gmc_active_store_id', default=1)
 
@@ -178,6 +187,17 @@ init()
 
 def fail(message, status=400):
     raise HTTPException(status_code=status, detail=message)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_response(request: Request, error: HTTPException):
+    # OAuth happens in a full browser navigation. Send failures back to the
+    # dashboard so the merchant sees an actionable message instead of raw JSON.
+    if request.url.path == '/api/shopify/callback':
+        detail = error.detail if isinstance(error.detail, str) else json.dumps(error.detail, ensure_ascii=False)
+        return RedirectResponse('/?' + urlencode({'shopify_error': detail[:500]}), status_code=303)
+    return JSONResponse({'detail': error.detail}, status_code=error.status_code, headers=error.headers)
+
 
 def require(request: Request):
     cookie = request.cookies.get('gmc_session', '')
@@ -678,16 +698,39 @@ def state(request: Request):
 @app.put('/api/store')
 def update_store(data: StoreUpdate, request: Request):
     require(request)
+    name = data.name.strip()
+    if not name:
+        fail('Enter the real store name')
     domain = data.domain.strip().lower()
     if domain and not re.fullmatch(r'[a-z0-9][a-z0-9-]*\.myshopify\.com', domain):
         fail('Use your store address ending in .myshopify.com')
+    normalized_business = {
+        key: value.strip() if isinstance(value, str) else value
+        for key, value in data.business.items()
+    }
+    normalized_business['business_name'] = name
+    email = str(normalized_business.get('email') or '')
+    if email and not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email):
+        fail('Enter a valid contact email')
+    currency = str(normalized_business.get('currency') or '')
+    if currency and not re.fullmatch(r'[A-Za-z]{3}', currency):
+        fail('Use a three-letter currency code such as USD')
+    if currency:
+        normalized_business['currency'] = currency.upper()
+    customer_domain = str(normalized_business.get('domain_name') or '').lower().rstrip('/')
+    if customer_domain:
+        parsed_domain = urlparse(customer_domain if '://' in customer_domain else 'https://' + customer_domain)
+        if (parsed_domain.scheme not in ('http', 'https') or not parsed_domain.hostname or
+                parsed_domain.path not in ('', '/') or parsed_domain.query or parsed_domain.fragment or
+                '.' not in parsed_domain.hostname or not re.fullmatch(r'[a-z0-9.-]+', parsed_domain.hostname)):
+            fail('Enter a valid customer-facing domain name')
+        normalized_business['domain_name'] = parsed_domain.hostname.lower()
+    normalized_business['live_chat'] = 'Available on the website during business hours'
+    normalized_business['business_hours'] = 'Mon-Fri: 9:00 AM - 5:00 PM (Eastern Time)'
+    normalized_business['shipping_cost'] = 'Free shipping in the United States (USD 0.00)'
     with db() as c:
         previous = store_row(c)
         domain_changed = domain != previous['domain']
-        normalized_business = dict(data.business)
-        normalized_business['live_chat'] = 'Available on the website during business hours'
-        normalized_business['business_hours'] = 'Mon-Fri: 9:00 AM - 5:00 PM (Eastern Time)'
-        normalized_business['shipping_cost'] = 'Free shipping in the United States (USD 0.00)'
         business_changed = normalized_business != json.loads(previous['business'])
         previous_brand = json.loads(previous['brand'])
         brand = {'color': str(data.brand.get('color', '')).strip().lower(),
@@ -711,7 +754,7 @@ def update_store(data: StoreUpdate, request: Request):
             event(c,1,'Business details changed; regenerate store content')
         elif brand_changed:
             event(c,1,'Brand colors changed; regenerate product images and storefront preview')
-        c.execute('UPDATE stores SET name=?,domain=?,business=?,brand=? WHERE id=1', (data.name.strip(),domain,json.dumps(normalized_business),json.dumps(brand)))
+        c.execute('UPDATE stores SET name=?,domain=?,business=?,brand=? WHERE id=1', (name,domain,json.dumps(normalized_business),json.dumps(brand)))
         event(c,1,'Store details updated')
     return {'ok':True}
 
@@ -1065,7 +1108,17 @@ async def ai_json(prompt, max_tokens=700):
     async with httpx.AsyncClient(timeout=90, follow_redirects=False) as client:
         response = await client.post('https://api.smartapi.shop/v1/messages',headers=headers,json=payload)
     if response.status_code != 200: fail(f'AI request failed ({response.status_code})',502)
-    answer = ''.join(part.get('text','') for part in response.json().get('content',[]) if part.get('type')=='text').strip()
+    try:
+        payload = response.json()
+    except ValueError:
+        fail('AI service returned an invalid response', 502)
+    content = payload.get('content') if isinstance(payload, dict) else None
+    if not isinstance(content, list):
+        fail('AI response did not contain usable content', 502)
+    answer = ''.join(
+        str(part.get('text') or '') for part in content
+        if isinstance(part, dict) and part.get('type') == 'text'
+    ).strip()
     match = re.search(r'\{.*\}',answer,re.S)
     if not match: fail('AI response did not contain usable content',502)
     try: return json.loads(match.group())
