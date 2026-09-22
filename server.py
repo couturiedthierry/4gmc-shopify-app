@@ -1219,11 +1219,13 @@ def update_product(product_id: int, data: ProductUpdate, request: Request):
 
 async def ai_json(prompt, max_tokens=700):
     gemini_key = GEMINI_API_KEY2 or GEMINI_API_KEY
-    if not (gemini_key or SMARTAPI_KEY):
-        fail('Configure the Gemini API key (GEMINI_API_KEY2 or GEMINI_API_KEY) in environment variables')
+    smart_key = SMARTAPI_KEY or GEMINI_API_KEY2 or GEMINI_API_KEY
+    if not (gemini_key or smart_key):
+        fail('Configure the Gemini API key (GEMINI_API_KEY2) or SmartAPI key in environment variables')
 
-    if gemini_key:
-        models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+    # Try Google Gemini API if a key is present and does not start with SmartAPI prefix 'AQ.'
+    if gemini_key and not gemini_key.startswith('AQ.'):
+        models = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-pro']
         headers = {'x-goog-api-key': gemini_key, 'Content-Type': 'application/json'}
         payload = {
             'contents': [{'parts': [{'text': prompt}]}],
@@ -1233,9 +1235,8 @@ async def ai_json(prompt, max_tokens=700):
                 'responseMimeType': 'application/json'
             }
         }
-        last_error = None
         for model in models:
-            url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
+            url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}'
             try:
                 async with httpx.AsyncClient(timeout=90, follow_redirects=False) as client:
                     response = await client.post(url, headers=headers, json=payload)
@@ -1243,7 +1244,7 @@ async def ai_json(prompt, max_tokens=700):
                     try:
                         data = response.json()
                     except ValueError:
-                        fail('AI service returned an invalid response', 502)
+                        continue
                     candidates = data.get('candidates', [])
                     if candidates and isinstance(candidates, list):
                         parts = candidates[0].get('content', {}).get('parts', [])
@@ -1254,48 +1255,39 @@ async def ai_json(prompt, max_tokens=700):
                                 return json.loads(match.group())
                             except ValueError:
                                 pass
-                elif response.status_code in (404, 400):
-                    last_error = f'Gemini model {model} returned HTTP {response.status_code}'
-                    continue
-                else:
-                    fail(f'Gemini AI request failed ({response.status_code}): {response.text[:200]}', 502)
-            except httpx.TimeoutException:
-                fail('Gemini took too long to respond. Page generation can be retried safely.', 504)
-            except httpx.RequestError:
-                fail('Gemini API could not be reached. Check network connection and try again.', 502)
-        if last_error:
-            fail(last_error, 502)
-        fail('Gemini API response did not contain usable JSON content', 502)
+            except (httpx.TimeoutException, httpx.RequestError):
+                pass
 
-    headers = {'x-api-key': SMARTAPI_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json'}
-    payload = {'model': 'claude-fable-5', 'max_tokens': max_tokens, 'messages': [{'role': 'user', 'content': prompt}]}
-    try:
-        async with httpx.AsyncClient(timeout=90, follow_redirects=False) as client:
-            response = await client.post('https://api.smartapi.shop/v1/messages', headers=headers, json=payload)
-    except httpx.TimeoutException:
-        fail('AI service took too long to respond. Page generation can be retried safely.', 504)
-    except httpx.RequestError:
-        fail('AI service could not be reached. Check the AI service and try again.', 502)
-    if response.status_code != 200:
-        fail(f'AI request failed ({response.status_code})', 502)
-    try:
-        payload = response.json()
-    except ValueError:
-        fail('AI service returned an invalid response', 502)
-    content = payload.get('content') if isinstance(payload, dict) else None
-    if not isinstance(content, list):
-        fail('AI response did not contain usable content', 502)
-    answer = ''.join(
-        str(part.get('text') or '') for part in content
-        if isinstance(part, dict) and part.get('type') == 'text'
-    ).strip()
-    match = re.search(r'\{.*\}', answer, re.S)
-    if not match:
-        fail('AI response did not contain usable content', 502)
-    try:
-        return json.loads(match.group())
-    except ValueError:
-        fail('AI response could not be parsed', 502)
+    # Fallback to SmartAPI (Claude) endpoint if smart_key is available
+    if smart_key:
+        headers = {'x-api-key': smart_key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json'}
+        payload = {'model': 'claude-fable-5', 'max_tokens': max_tokens, 'messages': [{'role': 'user', 'content': prompt}]}
+        try:
+            async with httpx.AsyncClient(timeout=90, follow_redirects=False) as client:
+                response = await client.post('https://api.smartapi.shop/v1/messages', headers=headers, json=payload)
+            if response.status_code == 200:
+                try:
+                    payload_data = response.json()
+                except ValueError:
+                    fail('AI service returned an invalid response', 502)
+                content = payload_data.get('content') if isinstance(payload_data, dict) else None
+                if isinstance(content, list):
+                    answer = ''.join(
+                        str(part.get('text') or '') for part in content
+                        if isinstance(part, dict) and part.get('type') == 'text'
+                    ).strip()
+                    match = re.search(r'\{.*\}', answer, re.S)
+                    if match:
+                        try:
+                            return json.loads(match.group())
+                        except ValueError:
+                            pass
+        except httpx.TimeoutException:
+            fail('AI service took too long to respond. Page generation can be retried safely.', 504)
+        except httpx.RequestError:
+            fail('AI service could not be reached. Check network connection and try again.', 502)
+
+    fail('AI request failed. Please check your Gemini API key (starts with AIzaSy) or SmartAPI key.', 502)
 
 @app.post('/api/products/{product_id}/prepare')
 async def prepare_product(product_id:int,request:Request):
