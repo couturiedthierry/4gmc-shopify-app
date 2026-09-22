@@ -1668,28 +1668,28 @@ def normalized_words(value):
 
 GENERIC_LEGAL_WORDS = {
     'a', 'about', 'acceptable', 'access', 'accordance', 'according', 'account', 'act', 'activities',
-    'addition', 'additional', 'address', 'addresses', 'addressing', 'administer', 'advertising', 'agree', 'agreement',
+    'addition', 'additional', 'address', 'addresses', 'addressing', 'administer', 'advertising', 'after', 'agree', 'agreement',
     'all', 'allow', 'allowed', 'alter', 'alteration', 'alterations', 'amount', 'an', 'analytics', 'and', 'any',
     'applicable', 'apply', 'approval', 'approve', 'approved', 'are', 'arguments', 'as', 'ask',
     'aspect', 'associated', 'at', 'attached', 'attaching', 'attachment', 'attachments', 'automatically',
     'available', 'bank', 'banks', 'be', 'beacon', 'beacons', 'because', 'been', 'before', 'behalf', 'being', 'between',
-    'billing', 'bound', 'box', 'boxes', 'browser', 'business', 'by', 'calendar', 'california', 'can',
+    'billing', 'bound', 'box', 'boxes', 'browser', 'business', 'by', 'calculate', 'calculated', 'calendar', 'california', 'can',
     'cancellation', 'card', 'cards', 'carrier', 'carriers', 'cart', 'ccpa', 'certain', 'change', 'changes',
-    'charges', 'check', 'checkout', 'claim', 'claimed', 'claiming', 'claims', 'code', 'codes',
+    'charges', 'check', 'checkout', 'city', 'claim', 'claimed', 'claiming', 'claims', 'code', 'codes',
     'collect', 'collected', 'collecting', 'collection', 'company', 'compliance', 'comply', 'component', 'complaint',
     'condition', 'conditions', 'confirm', 'confirmation', 'confirmed', 'confirming', 'consent',
     'contact', 'contain', 'containing', 'contains', 'content', 'contiguous', 'contract', 'controller', 'cookie',
-    'cookies', 'correct', 'cost', 'costs', 'courier', 'couriers', 'credit', 'credits', 'currency',
+    'cookies', 'correct', 'cost', 'costs', 'country', 'courier', 'couriers', 'credit', 'credits', 'currency',
     'custom', 'customer', 'customers', 'customs', 'damage', 'damaged', 'damages', 'data', 'date',
     'day', 'days', 'decision', 'deducted', 'deduction', 'deductions', 'defect', 'defective', 'defects',
     'delay', 'delayed', 'delays', 'delivery', 'destination', 'destinations', 'details', 'device',
     'dhl', 'differs', 'disclaim', 'disclaimer', 'discretion', 'dispatch', 'dispatched', 'dispatching',
-    'dispute', 'do', 'do-not-track', 'document', 'domain', 'due', 'duration', 'duties', 'duty',
+    'display', 'displayed', 'dispute', 'do', 'do-not-track', 'document', 'domain', 'due', 'duration', 'duties', 'duty',
     'each', 'economic', 'eea', 'effect', 'effective', 'either', 'eligibility', 'eligible', 'email',
     'emailed', 'emails', 'entire', 'error', 'errors', 'est', 'essential', 'estate', 'estimate',
     'estimated', 'estimates', 'estimating', 'etc', 'european', 'event', 'example', 'except', 'exchange',
-    'exchanged', 'exchanges', 'exclude', 'excluded', 'excludes', 'excluding', 'exclusion',
-    'experience', 'expires', 'express', 'fedex', 'fee', 'fees', 'file', 'files', 'final', 'flat',
+    'exchanged', 'exchanges', 'exclude', 'excluded', 'excludes', 'excluding', 'exclusion', 'expedited',
+    'experience', 'expires', 'express', 'fedex', 'fee', 'fees', 'file', 'files', 'final', 'first-class', 'flat',
     'flat-rate', 'following', 'for', 'form', 'freight', 'friday', 'from', 'fulfill', 'fulfilled',
     'fulfillment', 'fulfilling', 'full', 'further', 'gdpr', 'general', 'gift', 'give', 'governed', 'governing',
     'grant', 'ground', 'handling', 'has', 'have', 'help', 'holder', 'holiday', 'holidays', 'hour',
@@ -1699,18 +1699,18 @@ GENERIC_LEGAL_WORDS = {
     'international', 'into', 'invitation', 'invoice', 'is', 'issuer', 'issuers', 'issue', 'issued',
     'it', 'item', 'items', 'its', 'jurisdiction', 'keep', 'kind', 'know', 'label', 'labels',
     'language', 'law', 'lawful', 'laws', 'legal', 'liability', 'license', 'like', 'limitation', 'limitations',
-    'limited', 'local', 'location', 'locations', 'log', 'loss', 'lost', 'mail', 'mailed', 'mailing',
+    'limited', 'local', 'located', 'location', 'locations', 'log', 'loss', 'lost', 'mail', 'mailed', 'mailing',
     'make', 'manner', 'may', 'means', 'member', 'merchant', 'method', 'methods', 'missing', 'modification',
     'modifications', 'modify', 'monday', 'month', 'months', 'more', 'most', 'must', 'name',
     'necessary', 'need', 'new', 'no', 'not', 'note', 'notice', 'notices', 'notification',
     'notifications', 'notified', 'notify', 'number', 'numbers', 'obligations', 'obtain', 'of',
-    'offered', 'offers', 'officer', 'official', 'offset', 'on', 'one', 'only', 'opened', 'operating',
+    'offered', 'offers', 'officer', 'official', 'offset', 'on', 'once', 'one', 'only', 'opened', 'operating',
     'operation', 'opt', 'option', 'options', 'or', 'order', 'ordered', 'orders', 'ordinary',
     'organize', 'origin', 'original', 'originating', 'other', 'others', 'our', 'out', 'over', 'own',
     'owner', 'ownership', 'package', 'packaged', 'packages', 'packaging', 'packet', 'packets',
     'page', 'pages', 'parcel', 'parcels', 'part', 'parties', 'parts', 'party', 'past', 'pay',
     'paying', 'payment', 'payments', 'perform', 'period', 'periods', 'permission', 'person',
-    'personal', 'phone', 'pobox', 'policies', 'policy', 'portal', 'post', 'postage', 'postal',
+    'personal', 'phone', 'please', 'pobox', 'policies', 'policy', 'portal', 'post', 'postage', 'postal',
     'posted', 'practices', 'prepaid', 'price', 'prices', 'primary', 'privacy', 'procedure',
     'process', 'processed', 'processing', 'processor', 'product', 'products', 'promo', 'promotional', 'proof',
     'protection', 'provide', 'provided', 'provider', 'providers', 'provides', 'providing',
@@ -1729,8 +1729,8 @@ GENERIC_LEGAL_WORDS = {
     'sending', 'sent', 'separate', 'service', 'services', 'shall', 'share', 'shared', 'ship',
     'shipment', 'shipments', 'shipped', 'shipping', 'shopper', 'shoppers', 'shopping', 'short',
     'should', 'show', 'signal', 'signature', 'similar', 'site', 'sites', 'so', 'sole', 'solution',
-    'some', 'state', 'stated', 'statement', 'statements', 'states', 'statute', 'statutory', 'stolen',
-    'stop', 'store', 'stores', 'subject', 'subpoena', 'submit', 'submitted', 'such', 'sunday', 'support',
+    'some', 'standard', 'state', 'stated', 'statement', 'statements', 'states', 'status', 'statute', 'statutory', 'stolen',
+    'stop', 'store', 'stores', 'street', 'subject', 'subpoena', 'submit', 'submitted', 'such', 'sunday', 'support',
     'tag', 'tags', 'tariff', 'tariffs', 'tax', 'taxes', 'technical', 'technology', 'technologies',
     'temporary', 'terms', 'the', 'their', 'them', 'then', 'there', 'thereof', 'these', 'they',
     'third', 'this', 'those', 'through', 'thursday', 'time', 'timeframe', 'timeframes', 'timeline',
@@ -1753,8 +1753,8 @@ def is_generic_boilerplate(phrase):
     words = phrase.split()
     if not words:
         return False
-    generic_count = sum(1 for w in words if w in GENERIC_LEGAL_WORDS)
-    return (generic_count / len(words)) >= 0.55
+    generic_count = sum(1 for w in words if w in GENERIC_LEGAL_WORDS or w.isdigit())
+    return (generic_count / len(words)) >= 0.40
 
 
 
@@ -1885,7 +1885,7 @@ def validate_brand_page(item, title, body, business, source_host, identities):
         normalized = re.sub(r'[^a-z0-9]', '', identity.lower())
         if len(normalized) >= 5 and normalized not in target_values and normalized in output_normalized:
             fail(f'The generated {item["title"]} contains source-store identity text.', 502)
-    width = 18 if item.get('kind') in site_kit.POLICY_PATHS else 14
+    width = 16 if item.get('kind') in site_kit.POLICY_PATHS else 14
     passage = '' if '/__generated-' in item['source_url'] else copied_source_passage(item['example'], combined, width=width)
     if passage:
         fail(f'The generated {item["title"]} copied source wording instead of creating brand-specific content.', 502)
