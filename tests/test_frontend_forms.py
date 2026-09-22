@@ -13,7 +13,15 @@ assert "return 'Shopify address saved. Authorize or reconnect to publish.'" in s
 
 assert "const launchError=launchParams.get('shopify_error')" in source
 assert "catch(error){showToast(error?.message||error);}" in source
-assert "refresh().catch(error=>showToast(error?.message||error))" in source
+assert "refresh().catch(error=>showToast(error?.message||error,true))" in source
 assert "else showToast(error.message)" not in source
+
+assert "api('/api/site-kit/prepare-job','POST'" in source
+assert "pollSiteKitJob" in source
+assert "showToast(error?.message||error,true)" in source
+assert "setTimeout(hideToast,7000)" in source
+
+
+assert "waitForSiteKitGeneration(pageSource,stage)" in source
 
 print('Frontend form submission and notification regression checks passed')

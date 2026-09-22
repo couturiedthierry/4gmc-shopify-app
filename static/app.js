@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-let data = null, view = 'overview', editProduct = null, editPage = null, usaPlan = null, siteKitPlan = null, siteKitLastRun = null, productRun = null, previewTab = 'home', busy = false;
+let data = null, view = 'overview', editProduct = null, editPage = null, usaPlan = null, siteKitPlan = null, siteKitLastRun = null, siteKitJob = null, siteKitPollTimer = null, productRun = null, previewTab = 'home', busy = false;
 const names = {overview:'Overview',products:'Products',pages:'Pages & policies',design:'Store design',business:'Business & brand',connections:'Connections',activity:'Activity'};
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const val = (id) => $(id)?.value.trim() || '';
@@ -20,16 +20,56 @@ const messageText = (value, fallback='The request could not be completed') => {
  if(value&&typeof value==='object')return messageText(value.msg||value.message||value.detail,JSON.stringify(value));
  return fallback;
 };
-const showToast = (message) => { const el=$('toast'); el.textContent=messageText(message,'Saved successfully'); el.classList.add('show'); clearTimeout(showToast.timer); showToast.timer=setTimeout(()=>el.classList.remove('show'),4200); };
+const hideToast = () => { const el=$('toast'); el.classList.remove('show','persistent'); };
+const showToast = (message, persistent=false) => { const el=$('toast'); el.textContent=messageText(message,'Saved successfully'); el.classList.toggle('persistent',persistent); el.classList.add('show'); clearTimeout(showToast.timer); if(!persistent)showToast.timer=setTimeout(hideToast,7000); };
+$('toast').addEventListener('click',hideToast);
 async function api(path, method='GET', body) {
-  const response=await fetch(path,{method,credentials:'same-origin',headers:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+  let response;
+  try{response=await fetch(path,{method,credentials:'same-origin',headers:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});}
+  catch{throw new Error('The connection to 4GMC was interrupted. Long tasks keep running on the server and their status will be restored automatically.');}
   const result=await response.json().catch(()=>({}));
   if(!response.ok) throw new Error(messageText(result.detail));
   return result;
 }
 async function refresh(){
-  try{data=await api('/api/state');if(data.store.policy_source_url){try{siteKitPlan=await api('/api/site-kit/plan');}catch{siteKitPlan=null;}}$('login').classList.add('hidden');$('app').classList.remove('hidden');render();}
+  try{data=await api('/api/state');if(data.store.policy_source_url){try{siteKitPlan=await api('/api/site-kit/plan');}catch{siteKitPlan=null;}}if(data.site_kit_job){watchSiteKitJob(data.site_kit_job);}$('login').classList.add('hidden');$('app').classList.remove('hidden');render();}
   catch(error){if(error.message==='Sign in to continue'){$('login').classList.remove('hidden');$('app').classList.add('hidden');return;}throw error;}
+}
+const siteKitRunning = () => ['queued','running'].includes(siteKitJob?.status);
+function watchSiteKitJob(job){
+ siteKitJob=job;siteKitLastRun=job.progress||'Generating destination-brand pages…';clearTimeout(siteKitPollTimer);
+ if(siteKitRunning())siteKitPollTimer=setTimeout(pollSiteKitJob,1800);
+}
+async function pollSiteKitJob(){
+ if(!siteKitJob?.id)return;
+ try{
+  const job=await api('/api/site-kit/jobs/'+siteKitJob.id);siteKitJob=job;siteKitLastRun=job.progress;
+  if(view==='pages'&&data)render();
+  if(siteKitRunning()){siteKitPollTimer=setTimeout(pollSiteKitJob,1800);return;}
+  if(job.status==='failed'){siteKitJob=null;showToast(job.error||'Page generation failed.',true);await refresh();return;}
+  siteKitJob=null;siteKitPlan=await api('/api/site-kit/plan');
+  const skipped=job.result?.skipped?.length?` Shopify-managed pages skipped: ${job.result.skipped.join(', ')}.`:'';
+  if(data.store.connected){const result=await api('/api/site-kit/publish','POST',{fingerprint:siteKitPlan.fingerprint});siteKitPlan=await api('/api/site-kit/plan');siteKitLastRun=result.failed?`Generated the pages, but publishing stopped at ${result.failed}: ${result.detail}`:`Generated and published ${result.published.length} pages and policies in Shopify.`;}
+  else siteKitLastRun=`Generated ${siteKitPlan.pages.length} destination-brand pages. Connect Shopify to publish them.`;
+  await refresh();showToast(siteKitLastRun+skipped);
+ }catch(error){showToast(error?.message||error,true);siteKitPollTimer=setTimeout(pollSiteKitJob,5000);}
+}
+async function startSiteKitJob(sourceUrl){
+ if(siteKitRunning())return;
+ busy=true;
+ try{const job=await api('/api/site-kit/prepare-job','POST',{source_url:sourceUrl});watchSiteKitJob(job);render();showToast('Page generation started. You can leave this screen while it continues.');}
+ catch(error){showToast(error?.message||error,true);}
+ finally{busy=false;if(data)render();}
+}
+const wait = milliseconds => new Promise(resolve=>setTimeout(resolve,milliseconds));
+async function waitForSiteKitGeneration(sourceUrl,onProgress){
+ let job=await api('/api/site-kit/prepare-job','POST',{source_url:sourceUrl});
+ while(['queued','running'].includes(job.status)){
+  onProgress(job.progress+(job.total?` (${job.completed}/${job.total})`:''));
+  await wait(1800);job=await api('/api/site-kit/jobs/'+job.id);
+ }
+ if(job.status==='failed')throw new Error(job.error||'Page generation failed.');
+ onProgress(job.progress);return job;
 }
 function header(title, subtitle, actions='') {return `<div class="page-head"><div><p class="eyebrow">4GMC / MERCHANT WORKSPACE</p><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div><div class="actions">${actions}</div></div>`}
 function metric(label,value,sub){return `<div class="metric"><small>${esc(label)}</small><strong>${esc(value)}</strong><span>${esc(sub)}</span></div>`}
@@ -58,9 +98,10 @@ function pages(){
  const managed=siteKitPlan?.pages||[];
  const list=managed.length?managed.map(page=>`<details class="site-kit-document"><summary><strong>${esc(page.title)}</strong><span class="tag ${page.status==='published'?'good':''}">${esc(page.status)}</span></summary><div class="site-kit-copy">${esc(page.body)}</div></details>`).join(''):
   source?'<p class="sub">The reference is saved. Generate the destination-brand pages again before publishing.</p>':'<div class="empty">Enter a reference store to generate original pages for your brand.</div>';
- const result=siteKitLastRun?`<div class="note">${esc(siteKitLastRun)}</div>`:'';
+ const result=siteKitLastRun?`<div class="note">${esc(siteKitLastRun)}${siteKitRunning()&&siteKitJob.total?` (${siteKitJob.completed}/${siteKitJob.total})`:''}</div>`:'';
+ const generating=siteKitRunning();
  return header('Pages & policies','Generate original pages for the selected brand. The reference store supplies structure and operating rules only; its text and identity are blocked from publication.')+
- `<div class="grid two-col"><div class="grid"><section class="card"><h2>Reference structure</h2><p class="sub">Enter the store containing your usual page structure and policy rules. 4GMC extracts a neutral outline, then writes new pages using only this destination store identity.</p><form id="policy-source-form" class="form-grid"><label class="full">Reference store homepage<input id="source-store-url" type="url" value="${esc(source)}" placeholder="https://your-reference-store.com" required></label><div class="full actions"><button class="primary" ${busy?'disabled':''}>${data.store.connected?'Generate brand pages & publish':'Generate brand pages'}</button></div></form><p class="helper">Reference sentences are never sent to the final writing step. Publication stops if source wording, branding, contacts, domains, placeholders, or missing destination facts are detected.</p></section><section class="card"><h2>Generated brand pages & policies</h2><p class="sub">${managed.length?`${managed.length} original documents generated for ${esc(data.store.business.business_name||data.store.name)}`:'About, Contact, FAQ, Shipping, Returns, Privacy, Terms, and referenced custom page types will appear here.'}</p>${result}${list}${source&&data.store.connected?'<div class="actions" style="margin-top:16px"><button class="secondary" data-action="run-site-kit">Publish verified brand pages</button></div>':''}</section></div><div class="grid"><section class="card"><h2>Destination identity</h2><p class="sub">Every generated page is sealed against these selected-store facts before Shopify publication.</p>${check('Store name',Boolean(data.store.business.business_name),'Required throughout generated pages')}${check('Domain',Boolean(data.store.business.domain_name),'Only your customer-facing domain is allowed')}${check('Contact email',Boolean(data.store.business.email),'Other email addresses are blocked')}${check('Store address',Boolean(data.store.business.address),'Used only where customer identity requires it')}${check('Phone',Boolean(data.store.business.phone),'Required on the Contact page')}${check('Country & currency',Boolean(data.store.business.country&&data.store.business.currency),'Used for destination policy context')}${check('Shopify',data.store.connected,'Destination for automatic publication')}<div class="actions"><button class="secondary" data-view="business">Edit store details</button></div></section><section class="card"><h2>Automatic brand guard</h2><p class="sub">Publishing fails closed when any of these checks does not pass.</p>${check('Neutral reference outline',true,'Source prose is removed before writing')}${check('Original destination wording',true,'Long source passages are rejected')}${check('Source identity scan',true,'Brands, emails, domains, and contacts are blocked')}${check('Required policy facts',true,'Shipping and return terms must be clear')}${check('Sealed content',true,'Later edits require regeneration and a new safety check')}</section></div></div>`;
+ `<div class="grid two-col"><div class="grid"><section class="card"><h2>Reference structure</h2><p class="sub">Enter the store containing your usual page structure and policy rules. 4GMC extracts a neutral outline, then writes new pages using only this destination store identity.</p><form id="policy-source-form" class="form-grid"><label class="full">Reference store homepage<input id="source-store-url" type="url" value="${esc(source)}" placeholder="https://your-reference-store.com" required></label><div class="full actions"><button class="primary" ${busy||generating?'disabled':''}>${generating?'Generating pages…':data.store.connected?'Generate brand pages & publish':'Generate brand pages'}</button></div></form><p class="helper">Reference sentences are never sent to the final writing step. Publication stops if source wording, branding, contacts, domains, placeholders, or missing destination facts are detected.</p></section><section class="card"><h2>Generated brand pages & policies</h2><p class="sub">${managed.length?`${managed.length} original documents generated for ${esc(data.store.business.business_name||data.store.name)}`:'About, Contact, FAQ, Shipping, Returns, Privacy, Terms, and referenced custom page types will appear here.'}</p>${result}${list}${source&&data.store.connected?'<div class="actions" style="margin-top:16px"><button class="secondary" data-action="run-site-kit">Publish verified brand pages</button></div>':''}</section></div><div class="grid"><section class="card"><h2>Destination identity</h2><p class="sub">Every generated page is sealed against these selected-store facts before Shopify publication.</p>${check('Store name',Boolean(data.store.business.business_name),'Required throughout generated pages')}${check('Domain',Boolean(data.store.business.domain_name),'Only your customer-facing domain is allowed')}${check('Contact email',Boolean(data.store.business.email),'Other email addresses are blocked')}${check('Store address',Boolean(data.store.business.address),'Used only where customer identity requires it')}${check('Phone',Boolean(data.store.business.phone),'Required on the Contact page')}${check('Country & currency',Boolean(data.store.business.country&&data.store.business.currency),'Used for destination policy context')}${check('Shopify',data.store.connected,'Destination for automatic publication')}<div class="actions"><button class="secondary" data-view="business">Edit store details</button></div></section><section class="card"><h2>Automatic brand guard</h2><p class="sub">Publishing fails closed when any of these checks does not pass.</p>${check('Neutral reference outline',true,'Source prose is removed before writing')}${check('Original destination wording',true,'Long source passages are rejected')}${check('Source identity scan',true,'Brands, emails, domains, and contacts are blocked')}${check('Required policy facts',true,'Shipping and return terms must be clear')}${check('Sealed content',true,'Later edits require regeneration and a new safety check')}</section></div></div>`;
 }
 
 function storefrontPreview(snapshot){
@@ -135,7 +176,7 @@ function render(){
  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
  $('main').innerHTML=({overview,products,pages,design,business,connections,activity}[view])();
 }
-async function perform(fn){if(busy)return;busy=true;try{const message=await fn();await refresh();showToast(typeof message==='string'?message:'Saved successfully');}catch(error){showToast(error?.message||error);}finally{busy=false;}}
+async function perform(fn){if(busy)return;busy=true;try{const message=await fn();await refresh();showToast(typeof message==='string'?message:'Saved successfully');}catch(error){showToast(error?.message||error,true);}finally{busy=false;}}
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/login','POST',{password:val('password')});$('password').value='';$('login-error').textContent='';await refresh();}catch(error){$('login-error').textContent=error.message;}});
 for(const id of ['logout','mobile-logout']) $(id).addEventListener('click',async()=>{
  try{await api('/api/logout','POST');data=null;await refresh();}
@@ -192,8 +233,9 @@ document.body.addEventListener('submit',e=>{
   const stage=message=>{if(progress)progress.textContent=message;};
   try{
    if(!siteKitPlan||pageSource!==data.store.policy_source_url||siteKitPlan.pages.some(page=>page.status!=='published')){
-    stage('Generating pages, policies, and Contact page…');
-    siteKitPlan=await api('/api/site-kit/prepare','POST',{source_url:pageSource});
+    stage('Starting background generation for pages, policies, and Contact page…');
+    await waitForSiteKitGeneration(pageSource,stage);
+    siteKitPlan=await api('/api/site-kit/plan');
     stage('Publishing pages and policies to Shopify…');
     const pagesResult=await api('/api/site-kit/publish','POST',{fingerprint:siteKitPlan.fingerprint});
     if(pagesResult.failed)throw new Error('Page '+pagesResult.failed+': '+pagesResult.detail);
@@ -219,7 +261,7 @@ document.body.addEventListener('submit',e=>{
  if(form.classList.contains('store-connection-form'))perform(async()=>{const fields=new FormData(form);await api('/api/stores/'+form.dataset.id+'/connection','PUT',{domain:fields.get('domain')});usaPlan=null;return 'Shopify address saved. Authorize or reconnect to publish.';});
  if(form.id==='product-source-form')perform(async()=>{const catalog=await api('/api/products/catalog','POST',{source_url:val('product-source-url')});let done=0;const errors=[];const progress=$('catalog-progress');if(progress)progress.textContent=`Curated ${catalog.urls.length} products into ${catalog.categories.length} collections from ${catalog.discovered} discovered products.`;for(const url of catalog.urls){try{await api('/api/products/auto-publish','POST',{url});done++;}catch(error){errors.push(`${url.split('/').pop()}: ${error.message}`);}const progress=$('catalog-progress');if(progress)progress.textContent=`Processed ${done+errors.length} of ${catalog.urls.length} products. Published ${done}.`; }productRun=`Curated ${catalog.urls.length} products in ${catalog.categories.length} collections; published ${done}.${errors.length?` Issues: ${errors.slice(0,4).join(' | ')}${errors.length>4?` and ${errors.length-4} more`:''}`:''}`;return productRun;});
  if(form.id==='product-form')perform(async()=>{await api(`/api/products/${form.dataset.id}`,'PUT',{title:val('p-title'),description:val('p-description'),price:val('p-price'),sku:val('p-sku'),gtin:val('p-gtin')});return 'Product details saved.';});
- if(form.id==='policy-source-form')perform(async()=>{siteKitPlan=await api('/api/site-kit/prepare','POST',{source_url:val('source-store-url')});const skipped=siteKitPlan.skipped?.length?` Shopify-managed pages skipped: ${siteKitPlan.skipped.join(', ')}.`:'';if(data.store.connected){const result=await api('/api/site-kit/publish','POST',{fingerprint:siteKitPlan.fingerprint});siteKitPlan=await api('/api/site-kit/plan');siteKitLastRun=result.failed?`Published ${result.published.length} documents; stopped at ${result.failed}: ${result.detail}`:`Published ${result.published.length} pages and policies in Shopify.`;return siteKitLastRun+skipped;}siteKitLastRun=`Generated ${siteKitPlan.pages.length} destination-brand pages. Connect Shopify to publish them.`;return siteKitLastRun+skipped;});
+ if(form.id==='policy-source-form')startSiteKitJob(val('source-store-url'));
  if(form.id==='page-form')perform(async()=>{await api(`/api/pages/${form.dataset.id}`,'PUT',{kind:val('page-kind'),title:val('page-title'),body:val('page-body')});return 'Page details saved.';});
 });
 const launchParams=new URLSearchParams(window.location.search);
@@ -235,4 +277,4 @@ if(launchError){
  ),600));
  window.history.replaceState({},document.title,window.location.pathname);
 }
-refresh().catch(error=>showToast(error?.message||error));
+refresh().catch(error=>showToast(error?.message||error,true));

@@ -80,3 +80,6 @@ input[type=color]{height:50px;padding:4px;cursor:pointer}
 @media(max-width:720px){.preview-blank{min-height:360px}.preview-products{grid-template-columns:repeat(2,minmax(0,1fr))}.preview-section{padding:17px}}
 
 .store-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:18px}.store-card{min-width:0}.store-card-active{border-color:#7fa4f6;box-shadow:0 8px 28px #2251dc1c}.store-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.store-card-head .sub{overflow-wrap:anywhere}.store-actions{margin-top:18px}.add-store-card{border:2px dashed #adc4ef;background:#fafdff}.connection-extras{margin-top:0}@media(max-width:900px){.store-cards{grid-template-columns:1fr}}
+
+#toast.persistent{pointer-events:auto;cursor:pointer;background:#6f2831;padding-right:32px}
+#toast.persistent::after{content:'Click to dismiss';display:block;margin-top:4px;font-size:.7rem;color:#ffd9dd}
