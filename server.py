@@ -31,6 +31,7 @@ SESSION_SECRET = os.environ.get('SESSION_SECRET', '')
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
 SMARTAPI_KEY = os.environ.get('SMARTAPI_KEY', '')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+GEMINI_API_KEY2 = os.environ.get('GEMINI_API_KEY2', '')
 SHOPIFY_CLIENT_ID = os.environ.get('SHOPIFY_CLIENT_ID', '')
 SHOPIFY_CLIENT_SECRET = os.environ.get('SHOPIFY_CLIENT_SECRET', '')
 PUBLIC_URL = os.environ.get('PUBLIC_URL', 'http://localhost:8000').rstrip('/')
@@ -573,8 +574,8 @@ async def generate_storefront(request: Request):
         product_data = [{'id': product['id'], 'title': product['title'],
                          'price': product['price'], 'image_url': product['ai_image_url']}
                         for product in products]
-    if not (GEMINI_API_KEY or SMARTAPI_KEY):
-        fail('Configure Gemini (GEMINI_API_KEY) before generating the storefront')
+    if not (GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY):
+        fail('Configure Gemini before generating the storefront')
     prompt = (
         'Write truthful homepage copy for this ecommerce store. Return JSON only with headline '
         '(up to 70 characters) and intro (up to 180 characters). Do not invent delivery speeds, '
@@ -808,7 +809,7 @@ def state(request: Request):
     for page in pages:
         page['reviewed'] = page['reviewed_hash'] == page_digest(page) and bool(page['reviewed_hash'])
         page.pop('reviewed_hash', None)
-    return {'store':public_store,'stores':registered,'active_store_id':selected_id,'products':products,'collections':collections,'pages':pages,'events':events,'storefront':storefront,'site_kit_job':site_kit_job,'jobs':all_store_jobs(),'task_capacity':task_capacity_value(),'findings':issues(store,products,pages),'ai_connected':bool(GEMINI_API_KEY or SMARTAPI_KEY),'shopify_ready':bool(client_id and client_secret and FERNET and PUBLIC_URL.startswith('https://')),'image_connected':bool(GEMINI_API_KEY),'gmc_connected':False}
+    return {'store':public_store,'stores':registered,'active_store_id':selected_id,'products':products,'collections':collections,'pages':pages,'events':events,'storefront':storefront,'site_kit_job':site_kit_job,'jobs':all_store_jobs(),'task_capacity':task_capacity_value(),'findings':issues(store,products,pages),'ai_connected':bool(GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY),'shopify_ready':bool(client_id and client_secret and FERNET and PUBLIC_URL.startswith('https://')),'image_connected':bool(GEMINI_API_KEY or GEMINI_API_KEY2),'gmc_connected':False}
 
 @app.put('/api/store')
 def update_store(data: StoreUpdate, request: Request):
@@ -1137,7 +1138,7 @@ async def attach_generated_product_image(product_id: int, request: Request):
     business = json.loads(store['business'])
     try:
         results = await image_pipeline.generate_and_attach_images(
-            gemini_key=GEMINI_API_KEY, shopify_domain=store['domain'],
+            gemini_key=GEMINI_API_KEY or GEMINI_API_KEY2, shopify_domain=store['domain'],
             shopify_token=token, product_gid=product['shopify_id'],
             source_image_urls=images[:3], product_title=product['title'],
             source_title=product['source_title'], store_name=store['name'],
@@ -1217,12 +1218,13 @@ def update_product(product_id: int, data: ProductUpdate, request: Request):
     return {'ok':True}
 
 async def ai_json(prompt, max_tokens=700):
-    if not (GEMINI_API_KEY or SMARTAPI_KEY):
-        fail('Configure the Gemini API key (GEMINI_API_KEY) in environment variables')
+    gemini_key = GEMINI_API_KEY2 or GEMINI_API_KEY
+    if not (gemini_key or SMARTAPI_KEY):
+        fail('Configure the Gemini API key (GEMINI_API_KEY2 or GEMINI_API_KEY) in environment variables')
 
-    if GEMINI_API_KEY:
+    if gemini_key:
         models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
-        headers = {'x-goog-api-key': GEMINI_API_KEY, 'Content-Type': 'application/json'}
+        headers = {'x-goog-api-key': gemini_key, 'Content-Type': 'application/json'}
         payload = {
             'contents': [{'parts': [{'text': prompt}]}],
             'generationConfig': {
@@ -1980,8 +1982,8 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
         missing = [key.replace('_', ' ') for key in required if not str(business.get(key, '')).strip()]
         if missing:
             fail('Complete these Business & brand fields first: ' + ', '.join(missing))
-        if not (GEMINI_API_KEY or SMARTAPI_KEY):
-            fail('Configure the Gemini API key (GEMINI_API_KEY) in environment variables before generating brand pages')
+        if not (GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY):
+            fail('Configure the Gemini API key (GEMINI_API_KEY2 or GEMINI_API_KEY) in environment variables before generating brand pages')
         if progress:
             progress('Reading the reference policies and public pages…', 0, 0)
         try:
@@ -2294,9 +2296,9 @@ async def start_catalog_job(data: CatalogInput, request: Request):
         brand = json.loads(store['brand'] or '{}')
         if not isinstance(brand.get('logo'), dict):
             fail('Upload this store logo before generating branded product images')
-        if not (GEMINI_API_KEY or SMARTAPI_KEY):
-            fail('Configure Gemini (GEMINI_API_KEY) before generating product copy')
-        if not GEMINI_API_KEY:
+        if not (GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY):
+            fail('Configure Gemini before generating product copy')
+        if not (GEMINI_API_KEY or GEMINI_API_KEY2):
             fail('Configure Gemini before generating product images')
         job_id = uuid.uuid4().hex
         c.execute(
