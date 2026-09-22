@@ -1973,10 +1973,13 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
                 blueprint, identities = neutral_blueprint(extracted, source_host)
                 title_hint = SITE_KIT_TITLES.get(
                     item['kind'], item['handle'].replace('-', ' ').title() or 'Information')
+                product_genre = str(business.get('product_genre', '')).strip()
+                genre_text = f' Product genre/niche: {product_genre}.' if product_genre else ''
                 writing_prompt = (
                     'Write a new, original page for the destination ecommerce brand. The reference blueprint '
                     'contains structure and user-supplied operating rules only. Never imitate source wording or '
-                    'mention a source store. Use only destination facts and the operating rules in the blueprint. '
+                    'mention a source store. Use only destination facts and the operating rules in the blueprint.'
+                    f'{genre_text} Tailor the brand story, tone, FAQ answers, and customer guidance specifically to this product genre. '
                     'Use the destination business name naturally and make the identity unmistakable. Do not invent '
                     'certifications, partnerships, product claims, delivery promises, payment methods, legal '
                     'rights, addresses, fees, or timeframes. Destination shipping is free within the United States. '
@@ -1986,6 +1989,7 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
                     f'Destination facts: {json.dumps(business, ensure_ascii=False)}\n'
                     f'Reference blueprint: {json.dumps(blueprint, ensure_ascii=False)}'
                 )
+
                 rewrite_directions = (
                     '',
                     '\nSECOND PASS: A previous draft failed automated originality or brand validation. '
