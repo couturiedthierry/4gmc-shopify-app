@@ -14,11 +14,17 @@ const readBrandFile = (file) => new Promise((resolve,reject)=>{
   };
   reader.readAsDataURL(file);
 });
-const showToast = (message) => { const el=$('toast'); el.textContent=message; el.classList.add('show'); clearTimeout(showToast.timer); showToast.timer=setTimeout(()=>el.classList.remove('show'),4200); };
+const messageText = (value, fallback='The request could not be completed') => {
+ if(typeof value==='string'&&value.trim())return value;
+ if(Array.isArray(value))return value.map(item=>messageText(item,'')).filter(Boolean).join(' · ')||fallback;
+ if(value&&typeof value==='object')return messageText(value.msg||value.message||value.detail,JSON.stringify(value));
+ return fallback;
+};
+const showToast = (message) => { const el=$('toast'); el.textContent=messageText(message,'Saved successfully'); el.classList.add('show'); clearTimeout(showToast.timer); showToast.timer=setTimeout(()=>el.classList.remove('show'),4200); };
 async function api(path, method='GET', body) {
   const response=await fetch(path,{method,credentials:'same-origin',headers:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
   const result=await response.json().catch(()=>({}));
-  if(!response.ok) throw new Error(result.detail || 'The request could not be completed');
+  if(!response.ok) throw new Error(messageText(result.detail));
   return result;
 }
 async function refresh(){
@@ -129,7 +135,7 @@ function render(){
  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
  $('main').innerHTML=({overview,products,pages,design,business,connections,activity}[view])();
 }
-async function perform(fn){if(busy)return;busy=true;try{const message=await fn();await refresh();showToast(message||'Saved successfully');}catch(error){showToast(error.message);}finally{busy=false;}}
+async function perform(fn){if(busy)return;busy=true;try{const message=await fn();await refresh();showToast(typeof message==='string'?message:'Saved successfully');}catch(error){showToast(error?.message||error);}finally{busy=false;}}
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/login','POST',{password:val('password')});$('password').value='';$('login-error').textContent='';await refresh();}catch(error){$('login-error').textContent=error.message;}});
 for(const id of ['logout','mobile-logout']) $(id).addEventListener('click',async()=>{await api('/api/logout','POST');data=null;await refresh();});
 document.body.addEventListener('click',e=>{
@@ -166,8 +172,8 @@ document.body.addEventListener('change',e=>{
  setTimeout(()=>URL.revokeObjectURL(url),10000);
 });
 document.body.addEventListener('submit',e=>{
- const form=e.target;if(!form.id||form.id==='login-form')return;e.preventDefault();
- if(form.id==='design-colors-form')perform(()=>api('/api/store','PUT',{name:data.store.name,domain:data.store.domain,business:data.store.business,brand:{color:val('design-primary'),accent:val('design-accent')}}));
+ const form=e.target;if(form.id==='login-form')return;if(!form.id&&!form.classList.contains('store-connection-form'))return;e.preventDefault();
+ if(form.id==='design-colors-form')perform(async()=>{await api('/api/store','PUT',{name:data.store.name,domain:data.store.domain,business:data.store.business,brand:{color:val('design-primary'),accent:val('design-accent')}});return 'Brand colors saved.';});
  if(form.id==='brand-assets-form')perform(async()=>{
   const logo=$('design-logo').files[0],favicon=$('design-favicon').files[0];
   if(!logo&&!favicon)throw new Error('Choose a logo or favicon to upload.');
@@ -205,13 +211,13 @@ document.body.addEventListener('submit',e=>{
    return 'Generated the store preview from '+result.pages+' pages and '+result.products+' products.';
   }catch(error){stage('Stopped: '+error.message);throw error;}
  });
- if(form.id==='store-form')perform(()=>{usaPlan=null;siteKitPlan=null;return api('/api/store','PUT',{name:val('s-name'),domain:data.store.domain,business:{...data.store.business,business_name:val('s-name'),domain_name:val('b-domain-name'),email:val('b-email'),address:val('b-address'),country:val('b-country'),currency:val('b-currency'),phone:val('b-phone')},brand:data.store.brand})});
+ if(form.id==='store-form')perform(async()=>{usaPlan=null;siteKitPlan=null;await api('/api/store','PUT',{name:val('s-name'),domain:data.store.domain,business:{...data.store.business,business_name:val('s-name'),domain_name:val('b-domain-name'),email:val('b-email'),address:val('b-address'),country:val('b-country'),currency:val('b-currency'),phone:val('b-phone')},brand:data.store.brand});return 'Store details saved.';});
  if(form.id==='add-store-form')perform(async()=>{const fields=new FormData(form);await api('/api/stores','POST',{domain:fields.get('domain')});usaPlan=null;siteKitPlan=null;siteKitLastRun='';editPage=editProduct=null;return 'Store added and selected.';});
  if(form.classList.contains('store-connection-form'))perform(async()=>{const fields=new FormData(form);await api('/api/stores/'+form.dataset.id+'/connection','PUT',{domain:fields.get('domain')});usaPlan=null;return 'Shopify address saved. Authorize or reconnect to publish.';});
  if(form.id==='product-source-form')perform(async()=>{const catalog=await api('/api/products/catalog','POST',{source_url:val('product-source-url')});let done=0;const errors=[];const progress=$('catalog-progress');if(progress)progress.textContent=`Curated ${catalog.urls.length} products into ${catalog.categories.length} collections from ${catalog.discovered} discovered products.`;for(const url of catalog.urls){try{await api('/api/products/auto-publish','POST',{url});done++;}catch(error){errors.push(`${url.split('/').pop()}: ${error.message}`);}const progress=$('catalog-progress');if(progress)progress.textContent=`Processed ${done+errors.length} of ${catalog.urls.length} products. Published ${done}.`; }productRun=`Curated ${catalog.urls.length} products in ${catalog.categories.length} collections; published ${done}.${errors.length?` Issues: ${errors.slice(0,4).join(' | ')}${errors.length>4?` and ${errors.length-4} more`:''}`:''}`;return productRun;});
- if(form.id==='product-form')perform(()=>api(`/api/products/${form.dataset.id}`,'PUT',{title:val('p-title'),description:val('p-description'),price:val('p-price'),sku:val('p-sku'),gtin:val('p-gtin')}));
+ if(form.id==='product-form')perform(async()=>{await api(`/api/products/${form.dataset.id}`,'PUT',{title:val('p-title'),description:val('p-description'),price:val('p-price'),sku:val('p-sku'),gtin:val('p-gtin')});return 'Product details saved.';});
  if(form.id==='policy-source-form')perform(async()=>{siteKitPlan=await api('/api/site-kit/prepare','POST',{source_url:val('source-store-url')});const skipped=siteKitPlan.skipped?.length?` Shopify-managed pages skipped: ${siteKitPlan.skipped.join(', ')}.`:'';if(data.store.connected){const result=await api('/api/site-kit/publish','POST',{fingerprint:siteKitPlan.fingerprint});siteKitPlan=await api('/api/site-kit/plan');siteKitLastRun=result.failed?`Published ${result.published.length} documents; stopped at ${result.failed}: ${result.detail}`:`Published ${result.published.length} pages and policies in Shopify.`;return siteKitLastRun+skipped;}siteKitLastRun=`Generated ${siteKitPlan.pages.length} destination-brand pages. Connect Shopify to publish them.`;return siteKitLastRun+skipped;});
- if(form.id==='page-form')perform(()=>api(`/api/pages/${form.dataset.id}`,'PUT',{kind:val('page-kind'),title:val('page-title'),body:val('page-body')}));
+ if(form.id==='page-form')perform(async()=>{await api(`/api/pages/${form.dataset.id}`,'PUT',{kind:val('page-kind'),title:val('page-title'),body:val('page-body')});return 'Page details saved.';});
 });
 const launchParams=new URLSearchParams(window.location.search);
 if(launchParams.has('shop')&&launchParams.has('host')){
