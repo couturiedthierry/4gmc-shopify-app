@@ -277,7 +277,13 @@ def store_row(c):
     return c.execute('SELECT * FROM stores WHERE id=1').fetchone()
 
 def scope_set(value):
-    return {item.strip() for item in str(value or '').split(',') if item.strip()}
+    raw = {item.strip() for item in str(value or '').split(',') if item.strip()}
+    expanded = set(raw)
+    for item in raw:
+        if item.startswith('write_'):
+            expanded.add('read_' + item.removeprefix('write_'))
+    return expanded
+
 
 
 def store_connected(row):
