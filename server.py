@@ -573,8 +573,8 @@ async def generate_storefront(request: Request):
         product_data = [{'id': product['id'], 'title': product['title'],
                          'price': product['price'], 'image_url': product['ai_image_url']}
                         for product in products]
-    if not SMARTAPI_KEY:
-        fail('Configure Claude before generating the storefront')
+    if not (GEMINI_API_KEY or SMARTAPI_KEY):
+        fail('Configure Gemini (GEMINI_API_KEY) before generating the storefront')
     prompt = (
         'Write truthful homepage copy for this ecommerce store. Return JSON only with headline '
         '(up to 70 characters) and intro (up to 180 characters). Do not invent delivery speeds, '
@@ -808,7 +808,7 @@ def state(request: Request):
     for page in pages:
         page['reviewed'] = page['reviewed_hash'] == page_digest(page) and bool(page['reviewed_hash'])
         page.pop('reviewed_hash', None)
-    return {'store':public_store,'stores':registered,'active_store_id':selected_id,'products':products,'collections':collections,'pages':pages,'events':events,'storefront':storefront,'site_kit_job':site_kit_job,'jobs':all_store_jobs(),'task_capacity':task_capacity_value(),'findings':issues(store,products,pages),'ai_connected':bool(SMARTAPI_KEY),'shopify_ready':bool(client_id and client_secret and FERNET and PUBLIC_URL.startswith('https://')),'image_connected':bool(GEMINI_API_KEY),'gmc_connected':False}
+    return {'store':public_store,'stores':registered,'active_store_id':selected_id,'products':products,'collections':collections,'pages':pages,'events':events,'storefront':storefront,'site_kit_job':site_kit_job,'jobs':all_store_jobs(),'task_capacity':task_capacity_value(),'findings':issues(store,products,pages),'ai_connected':bool(GEMINI_API_KEY or SMARTAPI_KEY),'shopify_ready':bool(client_id and client_secret and FERNET and PUBLIC_URL.startswith('https://')),'image_connected':bool(GEMINI_API_KEY),'gmc_connected':False}
 
 @app.put('/api/store')
 def update_store(data: StoreUpdate, request: Request):
@@ -1217,17 +1217,65 @@ def update_product(product_id: int, data: ProductUpdate, request: Request):
     return {'ok':True}
 
 async def ai_json(prompt, max_tokens=700):
-    if not SMARTAPI_KEY: fail('SmartAPI key is not configured')
-    headers = {'x-api-key':SMARTAPI_KEY,'anthropic-version':'2023-06-01','content-type':'application/json'}
-    payload = {'model':'claude-fable-5','max_tokens':max_tokens,'messages':[{'role':'user','content':prompt}]}
+    if not (GEMINI_API_KEY or SMARTAPI_KEY):
+        fail('Configure the Gemini API key (GEMINI_API_KEY) in environment variables')
+
+    if GEMINI_API_KEY:
+        models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+        headers = {'x-goog-api-key': GEMINI_API_KEY, 'Content-Type': 'application/json'}
+        payload = {
+            'contents': [{'parts': [{'text': prompt}]}],
+            'generationConfig': {
+                'temperature': 0.2,
+                'maxOutputTokens': max_tokens,
+                'responseMimeType': 'application/json'
+            }
+        }
+        last_error = None
+        for model in models:
+            url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
+            try:
+                async with httpx.AsyncClient(timeout=90, follow_redirects=False) as client:
+                    response = await client.post(url, headers=headers, json=payload)
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                    except ValueError:
+                        fail('AI service returned an invalid response', 502)
+                    candidates = data.get('candidates', [])
+                    if candidates and isinstance(candidates, list):
+                        parts = candidates[0].get('content', {}).get('parts', [])
+                        answer = ''.join(p.get('text', '') for p in parts if isinstance(p, dict)).strip()
+                        match = re.search(r'\{.*\}', answer, re.S)
+                        if match:
+                            try:
+                                return json.loads(match.group())
+                            except ValueError:
+                                pass
+                elif response.status_code in (404, 400):
+                    last_error = f'Gemini model {model} returned HTTP {response.status_code}'
+                    continue
+                else:
+                    fail(f'Gemini AI request failed ({response.status_code}): {response.text[:200]}', 502)
+            except httpx.TimeoutException:
+                fail('Gemini took too long to respond. Page generation can be retried safely.', 504)
+            except httpx.RequestError:
+                fail('Gemini API could not be reached. Check network connection and try again.', 502)
+        if last_error:
+            fail(last_error, 502)
+        fail('Gemini API response did not contain usable JSON content', 502)
+
+    headers = {'x-api-key': SMARTAPI_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json'}
+    payload = {'model': 'claude-fable-5', 'max_tokens': max_tokens, 'messages': [{'role': 'user', 'content': prompt}]}
     try:
         async with httpx.AsyncClient(timeout=90, follow_redirects=False) as client:
-            response = await client.post('https://api.smartapi.shop/v1/messages',headers=headers,json=payload)
+            response = await client.post('https://api.smartapi.shop/v1/messages', headers=headers, json=payload)
     except httpx.TimeoutException:
-        fail('Claude took too long to respond. Page generation can be retried safely.', 504)
+        fail('AI service took too long to respond. Page generation can be retried safely.', 504)
     except httpx.RequestError:
-        fail('Claude could not be reached. Check the SmartAPI service and try again.', 502)
-    if response.status_code != 200: fail(f'AI request failed ({response.status_code})',502)
+        fail('AI service could not be reached. Check the AI service and try again.', 502)
+    if response.status_code != 200:
+        fail(f'AI request failed ({response.status_code})', 502)
     try:
         payload = response.json()
     except ValueError:
@@ -1239,10 +1287,13 @@ async def ai_json(prompt, max_tokens=700):
         str(part.get('text') or '') for part in content
         if isinstance(part, dict) and part.get('type') == 'text'
     ).strip()
-    match = re.search(r'\{.*\}',answer,re.S)
-    if not match: fail('AI response did not contain usable content',502)
-    try: return json.loads(match.group())
-    except ValueError: fail('AI response could not be parsed',502)
+    match = re.search(r'\{.*\}', answer, re.S)
+    if not match:
+        fail('AI response did not contain usable content', 502)
+    try:
+        return json.loads(match.group())
+    except ValueError:
+        fail('AI response could not be parsed', 502)
 
 @app.post('/api/products/{product_id}/prepare')
 async def prepare_product(product_id:int,request:Request):
@@ -1929,8 +1980,8 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
         missing = [key.replace('_', ' ') for key in required if not str(business.get(key, '')).strip()]
         if missing:
             fail('Complete these Business & brand fields first: ' + ', '.join(missing))
-        if not SMARTAPI_KEY:
-            fail('Configure the Claude API before generating brand pages')
+        if not (GEMINI_API_KEY or SMARTAPI_KEY):
+            fail('Configure the Gemini API key (GEMINI_API_KEY) in environment variables before generating brand pages')
         if progress:
             progress('Reading the reference policies and public pages…', 0, 0)
         try:
@@ -2243,8 +2294,8 @@ async def start_catalog_job(data: CatalogInput, request: Request):
         brand = json.loads(store['brand'] or '{}')
         if not isinstance(brand.get('logo'), dict):
             fail('Upload this store logo before generating branded product images')
-        if not SMARTAPI_KEY:
-            fail('Configure Claude before generating product copy')
+        if not (GEMINI_API_KEY or SMARTAPI_KEY):
+            fail('Configure Gemini (GEMINI_API_KEY) before generating product copy')
         if not GEMINI_API_KEY:
             fail('Configure Gemini before generating product images')
         job_id = uuid.uuid4().hex
