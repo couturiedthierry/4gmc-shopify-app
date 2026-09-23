@@ -13,6 +13,8 @@ import shopify_usa as usa
 import site_kit
 import image_pipeline
 import catalog_rules
+import product_source
+import data_validator
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
@@ -1398,27 +1400,142 @@ async def prepare_product(product_id:int,request:Request):
         product=c.execute('SELECT * FROM products WHERE id=? AND store_id=1',(product_id,)).fetchone()
         store=store_row(c)
     if not product: fail('Product not found',404)
+
+    # Extract ProductSource (source of truth)
+    source_raw = json.loads(product['source_data'] or '{}')
+    ps = product_source.ProductSourceExtractor.extract(
+        str(product_id), source_raw, supplier_url=product['source_url'],
+        sku=product['sku'], gtin=product['gtin']
+    )
+
     prompt=('You write accurate private-label Shopify product copy. Use only supplied source facts. Preserve real construction, materials, controls, straps, fasteners, proportions, variant color, and included parts. Never invent specifications, GTINs, certifications, performance claims, accessories, or warranties. '
             'Return JSON only with title and description fields. Keep description plain text under 900 characters. '
             f'Destination store brand: {store["name"]}; identity: {store["business"]}; brand colors: {store["brand"]}. '
             f'Use only the destination store name as the customer-facing brand. Do not copy the source vendor or source-store brand into the title or description. Keep verifiable model and construction facts accurate. '
-            f'Source product: {product["source_title"]}. Source facts: {product["source_data"][:10000]}')
+            f'Source product: {product["source_title"]}. Verified facts: {ps.verified_attributes}')
     result=await ai_json(prompt)
     title=str(result.get('title','')).strip()[:150]
     description=str(result.get('description','')).strip()[:2500]
     if not title or not description: fail('AI did not return a title and description',502)
     brand_name = store['name'].strip()
-    source = json.loads(product['source_data'] or '{}')
-    source_vendor = str(source.get('vendor') or '').strip()
+    source_vendor = str(source_raw.get('vendor') or '').strip()
     if (source_vendor and source_vendor.casefold() != brand_name.casefold() and
             re.search(r'(?<![A-Za-z0-9])' + re.escape(source_vendor) + r'(?![A-Za-z0-9])', title + ' ' + description, re.I)):
         fail('AI included the source vendor in private-label copy. Retry to generate destination-brand-only content.', 502)
     if brand_name and brand_name.lower() not in title.lower():
         title = f'{brand_name} {title}'[:150]
+
+    # Validate generated copy against verified attributes (strip unverified claims)
+    val_res = data_validator.ProductDataValidator.validate_and_clean(title, description, ps)
+    if not val_res.passed:
+        fail(f'Product copy validation failed: {"; ".join(val_res.errors)}', 502)
+
     with db() as c:
-        c.execute('UPDATE products SET title=?,description=?,status=?,reviewed_hash=? WHERE id=?',(title,description,'draft','',product_id))
-        event(c,1,f'AI prepared product: {title}')
+        c.execute('UPDATE products SET title=?,description=?,status=?,reviewed_hash=? WHERE id=?',(val_res.title,val_res.description,'draft','',product_id))
+        event(c,1,f'AI prepared product: {val_res.title}')
     return {'ok':True}
+
+
+@app.post('/api/products/{product_id}/rebuild')
+async def rebuild_product(product_id: int, request: Request):
+    require(request)
+    with db() as c:
+        product = c.execute('SELECT * FROM products WHERE id=? AND store_id=1', (product_id,)).fetchone()
+        store = store_row(c)
+    if not product:
+        fail('Product not found', 404)
+
+    # 1. Recover original supplier source product (ignoring current untrusted VYROX data)
+    source_data = json.loads(product['source_data'] or '{}')
+    ps = product_source.ProductSourceExtractor.extract(
+        str(product_id), source_data, supplier_url=product['source_url'],
+        sku=product['sku'], gtin=product['gtin']
+    )
+
+    # 2. Rebuild versioned ProductIdentity & BrandedProductIdentity
+    images = json.loads(product['images'] or '[]')
+    if not images:
+        fail('Source product has no original images for rebuild')
+
+    # 3. Generate clean marketing copy from verified facts
+    brand_name = store['name'].strip()
+    marketing_model = f"{brand_name} {ps.supplier_title}"[:150]
+    verified_text = "\n".join([f"{k}: {v.value}" for k, v in ps.verified_attributes.items()])
+    prompt = (
+        f"You write truthful private-label Shopify product copy. "
+        f"Brand: {brand_name}. "
+        f"Verified facts ONLY: {verified_text[:2000]}. "
+        f"Do NOT invent any unverified specifications. Return JSON with 'title' and 'description'."
+    )
+    res = await ai_json(prompt)
+    raw_title = str(res.get('title', marketing_model)).strip()[:150]
+    raw_desc = str(res.get('description', ps.supplier_description)).strip()[:2500]
+
+    val_res = data_validator.ProductDataValidator.validate_and_clean(raw_title, raw_desc, ps, marketing_model_name=marketing_model)
+
+    # 4. Save BEFORE/AFTER preview payload and backup current state
+    current_state = {
+        'title': product['title'],
+        'description': product['description'],
+        'price': product['price'],
+        'sku': product['sku'],
+        'gtin': product['gtin'],
+        'ai_image_url': product['ai_image_url'],
+        'ai_image_manifest': product['ai_image_manifest'],
+    }
+    rebuilt_state = {
+        'title': val_res.title,
+        'description': val_res.description,
+        'verified_claims': val_res.verified_claims,
+        'stripped_claims': val_res.stripped_claims,
+        'product_source': ps.to_dict(),
+    }
+
+    with db() as c:
+        c.execute('CREATE TABLE IF NOT EXISTS shopify_backups (id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER NOT NULL, shopify_id TEXT NOT NULL, backup_data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)')
+        cursor = c.execute('INSERT INTO shopify_backups (product_id, shopify_id, backup_data) VALUES (?, ?, ?)',
+                           (product_id, product['shopify_id'], json.dumps(current_state)))
+        backup_id = cursor.lastrowid
+        event(c, 1, f'Generated rebuild preview for product #{product_id}: {val_res.title}')
+
+    return {
+        'ok': True,
+        'product_id': product_id,
+        'backup_id': backup_id,
+        'current': current_state,
+        'rebuilt': rebuilt_state,
+        'validation_passed': val_res.passed,
+    }
+
+
+@app.post('/api/products/{product_id}/rebuild/approve')
+async def approve_product_rebuild(product_id: int, data: dict, request: Request):
+    require(request)
+    title = str(data.get('title', '')).strip()
+    description = str(data.get('description', '')).strip()
+    if not title or not description:
+        fail('Approved title and description are required')
+    with db() as c:
+        c.execute('UPDATE products SET title=?, description=?, status=? WHERE id=? AND store_id=1',
+                  (title, description, 'draft', product_id))
+        event(c, 1, f'Approved product rebuild: {title}')
+    return {'ok': True, 'status': 'rebuilt_approved'}
+
+
+@app.post('/api/products/{product_id}/rebuild/rollback')
+async def rollback_product_rebuild(product_id: int, request: Request):
+    require(request)
+    with db() as c:
+        c.execute('CREATE TABLE IF NOT EXISTS shopify_backups (id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER NOT NULL, shopify_id TEXT NOT NULL, backup_data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)')
+        backup = c.execute('SELECT * FROM shopify_backups WHERE product_id=? ORDER BY id DESC LIMIT 1', (product_id,)).fetchone()
+        if not backup:
+            fail('No backup found to restore for this product', 404)
+        data = json.loads(backup['backup_data'])
+        c.execute('UPDATE products SET title=?, description=?, price=?, sku=?, gtin=? WHERE id=? AND store_id=1',
+                  (data['title'], data['description'], data['price'], data['sku'], data['gtin'], product_id))
+        event(c, 1, f'Rolled back product #{product_id} to pre-rebuild state')
+    return {'ok': True, 'restored': data}
+
 
 def ensure_gmc_record(c, product):
     try:

@@ -157,10 +157,13 @@ class BrandCompositor:
         return canvas
 
 
+ALLOWED_PHYSICAL_SURFACES = ("product_body", "machine_panel", "handle_badge", "tool_head", "battery_pack")
+
+
 @dataclass
 class LogoAnchor:
     view_id: str = "front"
-    surface_id: str = "main_body_surface"
+    surface_id: str = "product_body"
     polygon_coordinates: list[tuple[float, float]] = field(default_factory=list)
     x_pct: float = 50.0
     y_pct: float = 42.0
@@ -169,6 +172,10 @@ class LogoAnchor:
     opacity: float = 1.0
     logo_variant: str = "auto"
     luminance_threshold: float = 140.0
+
+    def __post_init__(self):
+        if self.surface_id not in ALLOWED_PHYSICAL_SURFACES:
+            self.surface_id = "product_body"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -200,6 +207,7 @@ class BrandKit:
 @dataclass
 class ProductIdentityProfile:
     product_id: str = ""
+    version: int = 1
     original_images: list[str] = field(default_factory=list)
     canonical_views: dict[str, str] = field(default_factory=dict)
     master_masks: dict[str, str] = field(default_factory=dict)
@@ -213,6 +221,29 @@ class ProductIdentityProfile:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class BrandedProductIdentity:
+    version: int = 1
+    identity_version: int = 1
+    brand_name: str = ""
+    primary_color: str = "#2251dc"
+    accent_color: str = "#6f9cff"
+    branded_canonical_views: dict[str, bytes] = field(default_factory=dict)
+    logo_anchors: list[LogoAnchor] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "identity_version": self.identity_version,
+            "brand_name": self.brand_name,
+            "primary_color": self.primary_color,
+            "accent_color": self.accent_color,
+            "canonical_view_count": len(self.branded_canonical_views),
+            "logo_anchor_count": len(self.logo_anchors),
+        }
+
 
 
 class ProductIdentityManager:
@@ -414,6 +445,7 @@ class ProductValidationService:
 
 @dataclass
 class ProductIdentity:
+    version: int = 1
     sku: str = ""
     source_title: str = ""
     dominant_colors: list[str] = field(default_factory=list)
@@ -427,9 +459,30 @@ class ProductIdentity:
     visible_components: list[str] = field(default_factory=list)
     variant: str = ""
     units: int = 1
+    canonical_views: list[str] = field(default_factory=lambda: ["front"])
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def create_detail_crop(canonical_image: Image.Image, crop_region: str = "center") -> Image.Image:
+    """Create a high-resolution crop/enlargement of a real canonical product region.
+
+    DOES NOT ask AI to generate a new product. Strictly crops and enlarges the verified canonical product asset.
+    """
+    w, h = canonical_image.size
+    if crop_region == "center":
+        box = (int(w * 0.25), int(h * 0.25), int(w * 0.75), int(h * 0.75))
+    elif crop_region == "top":
+        box = (int(w * 0.20), int(h * 0.10), int(w * 0.80), int(h * 0.60))
+    elif crop_region == "badge":
+        box = (int(w * 0.30), int(h * 0.25), int(w * 0.70), int(h * 0.55))
+    else:
+        box = (int(w * 0.20), int(h * 0.20), int(w * 0.80), int(h * 0.80))
+
+    cropped = canonical_image.crop(box)
+    return cropped.resize((w, h), Image.Resampling.LANCZOS)
+
 
 
 def build_product_identity(source_bytes: bytes, source_title: str = "",
@@ -539,8 +592,11 @@ def segment_product(source_bytes: bytes) -> tuple[Image.Image, tuple[int, int, i
                 if x > max_x: max_x = x
                 if y > max_y: max_y = y
 
-    if max_x <= min_x or max_y <= min_y:
-        min_x, min_y, max_x, max_y = 0, 0, w - 1, h - 1
+    if max_x <= min_x or max_y <= min_y or (max_x - min_x) * (max_y - min_y) < 100:
+        min_x, min_y, max_x, max_y = int(w * 0.15), int(h * 0.15), int(w * 0.85), int(h * 0.85)
+        for y in range(min_y, max_y):
+            for x in range(min_x, max_x):
+                mask_pixels[x, y] = 255
 
     subject = image.copy()
     subject.putalpha(alpha_mask)
@@ -647,7 +703,7 @@ def composite_product_on_scene(subject_rgba: Image.Image, scene_bg: Image.Image,
     # Determine target scale: gmc_main occupies 75-80% of canvas
     target_max_w = int(tw * 0.78)
     target_max_h = int(th * 0.78)
-    scale = min(target_max_w / max(1, sw), target_max_h / max(1, sh), 1.0)
+    scale = min(target_max_w / max(1, sw), target_max_h / max(1, sh))
     new_sw = max(1, int(sw * scale))
     new_sh = max(1, int(sh * scale))
 
