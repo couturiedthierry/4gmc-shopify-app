@@ -92,3 +92,17 @@ input[type=color]{height:50px;padding:4px;cursor:pointer}
 .task-card small{color:var(--muted)}.task-error{margin-top:12px;padding:10px 12px;border-radius:9px;background:#4b242a;color:#ffd9dd;font-size:.78rem}
 .pill.failed{background:#4b242a;color:#ffd9dd}.task-settings select{min-width:120px;margin-top:6px}.task-settings .primary{align-self:flex-end}
 @media(max-width:900px){.task-list{grid-template-columns:1fr}}
+
+.product-thumbs{display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap}
+.product-thumb-item{position:relative;width:68px;height:68px;border-radius:8px;overflow:hidden;border:1px solid var(--line);background:#f4f7ff;cursor:pointer;flex:none;transition:transform .15s,box-shadow .15s}
+.product-thumb-item:hover{transform:scale(1.06);box-shadow:0 6px 16px rgba(0,0,0,0.15)}
+.product-thumb-item img{width:100%;height:100%;object-fit:cover;display:block}
+.product-thumb-badge{position:absolute;bottom:0;left:0;right:0;background:rgba(16,38,83,0.85);color:#fff;font-size:.6rem;font-weight:700;text-align:center;padding:2px 0;text-transform:capitalize}
+.product-thumb-empty{width:68px;height:68px;border-radius:8px;border:1px dashed #cbd8f0;background:#f8fafc;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:.62rem;color:var(--muted);text-align:center;padding:4px}
+
+.image-modal{position:fixed;inset:0;background:rgba(10,18,34,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)}
+.image-modal-card{background:#fff;border-radius:16px;max-width:700px;width:100%;padding:20px;box-shadow:0 25px 60px rgba(0,0,0,0.4);position:relative;display:flex;flex-direction:column;align-items:center}
+.image-modal-card img{max-width:100%;max-height:70vh;object-fit:contain;border-radius:10px;border:1px solid var(--line)}
+.image-modal-close{position:absolute;top:14px;right:14px;background:#e8efff;border:0;width:32px;height:32px;border-radius:50%;font-weight:800;color:#2149ad;cursor:pointer;font-size:1.1rem;display:grid;place-items:center}
+.image-modal-close:hover{background:#dbe7ff}
+.image-modal-title{font-weight:700;font-size:.95rem;color:var(--navy);margin-top:12px;text-transform:capitalize}

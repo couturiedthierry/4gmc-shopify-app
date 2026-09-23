@@ -136,12 +136,16 @@ function check(name,done,sub){return `<div class="checkrow"><span class="check-i
 function products(){
  const source=data.store.product_source_url||'';
  const result=productRun?`<div class="note">${esc(productRun)}${catalogRunning()&&catalogJob.total?` (${catalogJob.completed}/${catalogJob.total})`:''}</div>`:'';
- const list=data.products.length?data.products.map(product=>{
-  const g=product.gmc_data||{}, roles=(product.ai_image_manifest||[]).map(item=>item.role);
-  const identifier=g.gtin?`GTIN verified`:(g.mpn?`Private-label MPN`:`Identifier needs attention`);
-  const inventory=product.inventory_tracked?`${product.inventory_quantity??0} tracked`:(g.availability==='in_stock'?'Available · quantity untracked':'Out of stock');
-  return `<div class="item product-automation-item"><div><strong>${esc(product.title)}</strong><small>${esc(product.source_title)} · ${esc(product.price?product.price+' '+(data.store.business.currency||'USD'):'Price unavailable')} · ${esc(product.status)}</small><small>${esc(product.collection_title||'Featured Products')} · ${esc(identifier)} · ${esc(inventory)}</small><small>Images: ${esc(roles.length?roles.join(', '):'pending hero, detail, lifestyle')}</small></div>${product.status==='published'?'<span class="tag good">Online Store</span>':''}<button type="button" class="secondary" data-action="resync-product" data-id="${product.id}">Re-sync</button></div>`;
- }).join(''):'<div class="empty">No products imported yet.</div>';
+  const list=data.products.length?data.products.map(product=>{
+   const g=product.gmc_data||{};
+   const manifest=Array.isArray(product.ai_image_manifest)?product.ai_image_manifest:[];
+   const identifier=g.gtin?`GTIN verified`:(g.mpn?`Private-label MPN`:`Identifier needs attention`);
+   const inventory=product.inventory_tracked?`${product.inventory_quantity??0} tracked`:(g.availability==='in_stock'?'Available · quantity untracked':'Out of stock');
+   const thumbs = manifest.length ? manifest.map(img=>`<div class="product-thumb-item" data-action="preview-image" data-src="${esc(img.src)}" data-role="${esc(img.role||'preview')}" title="Click to enlarge ${esc(img.role||'AI image')}"><img src="${esc(img.src)}" alt="${esc(img.role||'AI image')}"><span class="product-thumb-badge">${esc(img.role||'image')}</span></div>`).join('') :
+    `<div class="product-thumb-empty">Hero<br>(pending)</div><div class="product-thumb-empty">Detail<br>(pending)</div><div class="product-thumb-empty">Lifestyle<br>(pending)</div>`;
+   const thumbWrap = `<div class="product-thumbs">${thumbs}</div>`;
+   return `<div class="item product-automation-item"><div><strong>${esc(product.title)}</strong><small>${esc(product.source_title)} · ${esc(product.price?product.price+' '+(data.store.business.currency||'USD'):'Price unavailable')} · ${esc(product.status)}</small><small>${esc(product.collection_title||'Featured Products')} · ${esc(identifier)} · ${esc(inventory)}</small>${thumbWrap}</div><div class="actions" style="flex-direction:column;align-items:flex-end;gap:6px;">${product.status==='published'?'<span class="tag good">Online Store</span>':''}<button type="button" class="primary" data-action="regenerate-image" data-id="${product.id}">Regenerate images</button><button type="button" class="secondary" data-action="resync-product" data-id="${product.id}">Re-sync Shopify</button></div></div>`;
+  }).join(''):'<div class="empty">No products imported yet.</div>';
  return header('Products','Build a curated private-label catalog with consistent branded photography, collections, inventory, and Google Merchant product identification.')+
  `<div class="grid two-col"><div class="grid"><section class="card"><h2>Product source website</h2><p class="sub">4GMC scans the public Shopify catalog, selects up to 20 strong physical products across up to four coherent categories, and keeps one available representative variation per product.</p><form id="product-source-form" class="form-grid"><label class="full">Source website homepage<input id="product-source-url" type="url" value="${esc(source)}" placeholder="https://product-source-store.com" required></label><div class="full actions"><button class="primary" ${data.store.connected&&!busy&&!catalogRunning()?'':'disabled'}>${catalogRunning()?'Catalog running…':'Build & publish catalog'}</button><button type="button" class="secondary" data-view="tasks">Task center</button></div></form><p id="catalog-progress" class="helper">${data.store.connected?'Source and destination currencies must match. Products publish automatically after every validation passes.':'Connect your Shopify store before publishing products.'}</p>${result}</section><section class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div><h2 style="margin:0">Automated catalog</h2><p class="sub" style="margin:0">${data.products.length} products · ${(data.collections||[]).length} Shopify collections</p></div>${data.products.length?'<button type="button" class="secondary" data-action="reset-all-products">Re-sync catalog</button>':''}</div><div class="list">${list}</div></section></div><div class="grid"><section class="card"><h2>Automatic product rules</h2>${check('Store connected',data.store.connected,'Required for immediate publication')}${check('Store logo',Boolean(data.store.brand.logo?.digest),'Required in the corner and on realistic product surfaces')}${check('Three-image gallery',data.image_connected,'Every hero, detail, and lifestyle image receives the exact corner logo')}${check('Product fidelity',true,'Construction, materials, controls, colors, and included parts are preserved')}${check('Catalog curation',true,'Maximum 20 physical products in four collections')}${check('Inventory',true,'Exact public quantities are tracked; unknown quantities remain untracked')}${check('GMC identification',true,'GTINs are checksum-tested and never invented; private-label MPNs are stable')}${check('Source facts',true,'Unsupported claims, certifications, and accessories are blocked')}<div class="note">The exact uploaded logo is composited into the top-left corner of every generated image. Gemini may also place it on up to three physically realistic product surfaces. Source barcodes from a different brand are kept only as supplier-confirmation candidates. 4GMC does not submit them as your private-label GTIN.</div></section></div></div>`;
 }
@@ -242,6 +246,15 @@ for(const id of ['logout','mobile-logout']) $(id).addEventListener('click',async
  catch(error){showToast(error?.message||error);}
 });
 document.body.addEventListener('click',e=>{
+  if(e.target.id==='modal-close-btn'||e.target.id==='image-modal'){$('image-modal').classList.add('hidden');return;}
+  const preview=e.target.closest('[data-action="preview-image"]');
+  if(preview){
+    const src=preview.dataset.src, role=preview.dataset.role;
+    $('modal-img').src=src;
+    $('modal-title').textContent=(role||'AI Product Image')+' preview';
+    $('image-modal').classList.remove('hidden');
+    return;
+  }
  const nav=e.target.closest('[data-view]');if(nav){view=nav.dataset.view;editPage=editProduct=null;render();return;}
  const previewButton=e.target.closest('[data-preview-tab]');if(previewButton){previewTab=previewButton.dataset.previewTab;render();return;}
  const button=e.target.closest('[data-action]');if(!button)return;
@@ -260,6 +273,7 @@ document.body.addEventListener('click',e=>{
   case 'publish-page':if(window.confirm('Publish this reviewed content to Shopify? Existing store policy text of the same type will be replaced.'))perform(async()=>{const result=await api(`/api/pages/${id}/publish`,'POST');return result.url?'Published and verified in Shopify.':'Published and verified.';});break;
   case 'select-store':perform(async()=>{await api('/api/stores/'+id+'/select','POST');usaPlan=null;siteKitPlan=null;siteKitLastRun='';editPage=editProduct=null;return 'Store selected.';});break;
   case 'connect-shopify':window.location.href='/api/shopify/connect';break;
+   case 'regenerate-image':if(window.confirm('Regenerate fresh branded hero, detail, and lifestyle images for this product using Gemini GMC Image Engine?'))perform(async()=>{await api(`/api/products/${id}/regenerate-image`,'POST');await refresh();return 'Fresh GMC branded images generated and updated in Shopify.';});break;
    case 'resync-product':if(window.confirm('Re-sync this product with Shopify? This resets its local Shopify binding and image cache so it can be cleanly updated.'))perform(async()=>{await api(`/api/products/${id}/resync`,'POST');await refresh();return 'Product re-sync complete. Click Build & publish catalog to update.';});break;
    case 'reset-all-products':if(window.confirm('Re-sync all catalog products with Shopify? This clears local Shopify bindings and image cache for all products so they can be freshly rebuilt.'))perform(async()=>{await api('/api/products/reset-all','POST');await refresh();return 'Catalog reset complete. Click Build & publish catalog to re-update all products.';});break;
   case 'review-usa':perform(async()=>{usaPlan=await api('/api/shopify/usa-plan');return 'USA setup review is ready.';});break;

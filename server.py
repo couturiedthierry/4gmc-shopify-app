@@ -1263,6 +1263,26 @@ def resync_product(product_id: int, request: Request):
     return {'ok': True}
 
 
+@app.post('/api/products/{product_id}/regenerate-image')
+async def regenerate_product_images(product_id: int, request: Request):
+    require(request)
+    with db() as c:
+        product = c.execute('SELECT * FROM products WHERE id=? AND store_id=1', (product_id,)).fetchone()
+        if not product:
+            fail('Product not found', 404)
+        c.execute("UPDATE products SET ai_image_digest='', ai_image_manifest='' WHERE id=?", (product_id,))
+        event(c, 1, f'Cleared image cache to regenerate images for product: {product["title"]}')
+    if not product['shopify_id']:
+        await prepare_product(product_id, request)
+        with db() as c:
+            product = c.execute('SELECT * FROM products WHERE id=? AND store_id=1', (product_id,)).fetchone()
+            product = ensure_gmc_record(c, product)
+            check_product_facts(product)
+            c.execute('UPDATE products SET reviewed_hash=? WHERE id=?', (product_digest(product), product_id))
+        await upload_product(product_id, request)
+    return await attach_generated_product_image(product_id, request)
+
+
 @app.post('/api/products/reset-all')
 def reset_all_products(request: Request):
     require(request)
