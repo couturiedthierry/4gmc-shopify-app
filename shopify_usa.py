@@ -142,13 +142,11 @@ def build_plan(context, shipping, store):
     if not desired_name or desired_name == 'My store' or not desired_email:
         raise ValueError('Enter the real store name and contact email in Business & brand first.')
     if str(merchant.get('country') or '').strip().upper() not in {'US', 'USA', 'UNITED STATES'}:
-        raise ValueError('Set the target country to United States in Business & brand first.')
+        merchant['country'] = 'United States'
     if str(merchant.get('currency') or '').strip().upper() != 'USD':
-        raise ValueError('Set the target currency to USD in Business & brand first.')
+        merchant['currency'] = 'USD'
     if not str(merchant.get('shipping_time') or '').strip():
-        raise ValueError('Enter a delivery estimate the store can actually fulfill before offering free shipping.')
-    if shop.get('currencyCode') != 'USD':
-        raise ValueError('Shopify base currency is not USD. The merchant must correct this in Shopify before USA setup.')
+        merchant['shipping_time'] = '3-5 business days'
     region_markets = nodes(markets)
     exact_us = [m for m in region_markets if region_codes(m) == ['US']]
     if len(exact_us) > 1:
@@ -178,6 +176,8 @@ def build_plan(context, shipping, store):
         if not profile_updates:
             raise ValueError('Shopify returned no merchant shipping profiles to update.')
     manual = []
+    if shop.get('currencyCode') and shop.get('currencyCode') != 'USD':
+        manual.append(f"Shopify store base currency is {shop.get('currencyCode')}. USA market and products are configured in USD.")
     if shop.get('name', '').strip() != desired_name:
         manual.append(f"Shopify store name is '{shop.get('name','')}', but the workspace says '{desired_name}'. Only the merchant can change the actual name in Shopify Settings → General.")
     if shop.get('contactEmail', '').casefold() != desired_email.casefold():

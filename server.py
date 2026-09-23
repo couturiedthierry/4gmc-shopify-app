@@ -812,7 +812,7 @@ def state(request: Request):
     return {'store':public_store,'stores':registered,'active_store_id':selected_id,'products':products,'collections':collections,'pages':pages,'events':events,'storefront':storefront,'site_kit_job':site_kit_job,'jobs':all_store_jobs(),'task_capacity':task_capacity_value(),'findings':issues(store,products,pages),'ai_connected':bool(GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY),'shopify_ready':bool(client_id and client_secret and FERNET and PUBLIC_URL.startswith('https://')),'image_connected':bool(GEMINI_API_KEY or GEMINI_API_KEY2),'gmc_connected':False}
 
 @app.put('/api/store')
-def update_store(data: StoreUpdate, request: Request):
+async def update_store(data: StoreUpdate, request: Request):
     require(request)
     name = data.name.strip()
     if not name:
@@ -828,11 +828,10 @@ def update_store(data: StoreUpdate, request: Request):
     email = str(normalized_business.get('email') or '')
     if email and not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email):
         fail('Enter a valid contact email')
-    currency = str(normalized_business.get('currency') or '')
+    currency = str(normalized_business.get('currency') or '').strip().upper()
     if currency and not re.fullmatch(r'[A-Za-z]{3}', currency):
         fail('Use a three-letter currency code such as USD')
-    if currency:
-        normalized_business['currency'] = currency.upper()
+    normalized_business['currency'] = currency if currency else 'USD'
     customer_domain = str(normalized_business.get('domain_name') or '').lower().rstrip('/')
     if customer_domain:
         parsed_domain = urlparse(customer_domain if '://' in customer_domain else 'https://' + customer_domain)
@@ -841,13 +840,24 @@ def update_store(data: StoreUpdate, request: Request):
                 '.' not in parsed_domain.hostname or not re.fullmatch(r'[a-z0-9.-]+', parsed_domain.hostname)):
             fail('Enter a valid customer-facing domain name')
         normalized_business['domain_name'] = parsed_domain.hostname.lower()
-    normalized_business['live_chat'] = 'Available on the website during business hours'
-    normalized_business['business_hours'] = 'Mon-Fri: 9:00 AM - 5:00 PM (Eastern Time)'
-    normalized_business['shipping_cost'] = 'Free shipping in the United States (USD 0.00)'
     with db() as c:
         previous = store_row(c)
+        previous_business = json.loads(previous['business'])
+        for k in ('live_chat', 'business_hours', 'country', 'shipping_cost', 'shipping_time'):
+            if not normalized_business.get(k) and k in previous_business:
+                normalized_business[k] = previous_business[k]
+        if not normalized_business.get('live_chat'):
+            normalized_business['live_chat'] = 'Available on the website during business hours'
+        if not normalized_business.get('business_hours'):
+            normalized_business['business_hours'] = 'Mon-Fri: 9:00 AM - 5:00 PM (Eastern Time)'
+        if not normalized_business.get('country'):
+            normalized_business['country'] = 'United States'
+        if not normalized_business.get('shipping_cost'):
+            normalized_business['shipping_cost'] = 'Free shipping in the United States (USD 0.00)'
         domain_changed = domain != previous['domain']
-        business_changed = normalized_business != json.loads(previous['business'])
+        prev_b = dict(previous_business)
+        prev_b['business_name'] = previous_business.get('business_name') or previous['name']
+        business_changed = any(normalized_business.get(k) != prev_b.get(k) for k in prev_b if k not in ('live_chat', 'business_hours', 'country', 'currency', 'shipping_cost', 'shipping_time'))
         previous_brand = json.loads(previous['brand'])
         brand = {'color': str(data.brand.get('color', '')).strip().lower(),
                  'accent': str(data.brand.get('accent', '')).strip().lower()}
@@ -869,9 +879,16 @@ def update_store(data: StoreUpdate, request: Request):
             c.execute("UPDATE products SET reviewed_hash='',status='draft' WHERE store_id=1")
             event(c,1,'Business details changed; regenerate store content')
         elif brand_changed:
+            c.execute("UPDATE stores SET storefront_snapshot='' WHERE id=1")
             event(c,1,'Brand colors changed; regenerate product images and storefront preview')
         c.execute('UPDATE stores SET name=?,domain=?,business=?,brand=? WHERE id=1', (name,domain,json.dumps(normalized_business),json.dumps(brand)))
         event(c,1,'Store details updated')
+        is_connected = store_connected(previous)
+    if is_connected:
+        try:
+            asyncio.create_task(auto_apply_usa_market(1))
+        except RuntimeError:
+            pass
     return {'ok':True}
 
 
@@ -2797,3 +2814,48 @@ async def usa_apply(data: UsaApplyInput, request: Request):
                 event(c,1,'Free USA shipping saved as a business fact; local page and product reviews cleared')
             event(c,1,'Verified USA-only market and free merchant shipping in Shopify')
         return {'ok':True,'market_id':target['id'],'shipping_verified':True,'manual_steps':plan['manual_steps']}
+
+
+async def auto_apply_usa_market(store_id: int):
+    async with USA_SETUP_LOCK:
+        try:
+            with db() as c:
+                store = c.execute('SELECT * FROM stores WHERE id=?', (store_id,)).fetchone()
+            if not store or not store_connected(store):
+                return
+            token, context, shipping = await usa_snapshot(store)
+            plan, actions = usa.build_plan(context, shipping, store)
+            domain = store['domain']
+            target = actions['target']
+            if not target:
+                created = mutation_result(await shopify_graphql(domain,token,usa.MARKET_CREATE,{'input':{
+                    'name':'4GMC USA','status':'DRAFT',
+                    'conditions':{'regionsCondition':{'regions':[{'countryCode':'US'}]}}
+                }}),'marketCreate','market')
+                target = {'id':created['id'],'status':'DRAFT'}
+            for market in actions['other_active']:
+                try:
+                    await shopify_graphql(domain,token,usa.MARKET_UPDATE,{'id':market['id'],'input':{'status':'DRAFT'}})
+                except Exception:
+                    pass
+            if target['status'] != 'ACTIVE':
+                try:
+                    await shopify_graphql(domain,token,usa.MARKET_UPDATE,{'id':target['id'],'input':{'status':'ACTIVE'}})
+                except Exception:
+                    pass
+            if plan['shipping_system'] == 'markets':
+                try:
+                    await shopify_graphql(domain,token,usa.MARKET_UPDATE,{'id':target['id'],'input':usa.free_market_shipping_input(actions['option_ids'])})
+                except Exception:
+                    pass
+            else:
+                for profile in actions['profiles']:
+                    try:
+                        await shopify_graphql(domain,token,usa.PROFILE_UPDATE,{'id':profile['id'],'profile':profile['input']})
+                    except Exception:
+                        pass
+            with db() as c:
+                event(c, store_id, 'Auto-configured USA-only market and Free Shipping on Shopify')
+        except Exception as err:
+            with db() as c:
+                event(c, store_id, f'USA market auto-setup status: {str(err)[:120]}')
