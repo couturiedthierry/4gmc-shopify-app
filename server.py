@@ -1205,8 +1205,12 @@ async def publish_source_product(product_id: int, request: Request):
     query = 'query($identifier:ProductIdentifierInput!){productByIdentifier(identifier:$identifier){id status handle}}'
     read = await shopify_graphql(domain, token, query, {'identifier': {'id': remote_id}})
     remote = read.get('productByIdentifier') or {}
-    if remote.get('id') != remote_id or remote.get('status') not in {'DRAFT', 'ACTIVE'}:
-        fail('Shopify product is missing or has an unexpected status. Check it before retrying.', 409)
+    if not remote or remote.get('id') != remote_id:
+        with db() as c:
+            c.execute("UPDATE products SET shopify_id='', status='draft' WHERE id=?", (product_id,))
+        fail('The product was deleted in Shopify. Upload it again before publishing.', 409)
+    if remote.get('status') not in {'DRAFT', 'ACTIVE', 'ARCHIVED'}:
+        fail('Shopify product has an unexpected status. Check it in Shopify before publishing.', 409)
     pubs = await shopify_graphql(domain, token, 'query{publications(first:50){nodes{id name channels(first:2){nodes{handle name}}}}}')
     online = next((p for p in (pubs.get('publications') or {}).get('nodes', [])
                    if p.get('name', '').strip().lower() == 'online store' or
@@ -1214,7 +1218,7 @@ async def publish_source_product(product_id: int, request: Request):
                        for ch in ((p.get('channels') or {}).get('nodes') or []))), None)
     if not online:
         fail('The destination store has no accessible Online Store publication')
-    if remote['status'] == 'DRAFT':
+    if remote['status'] in {'DRAFT', 'ARCHIVED'}:
         update = {'id': remote_id, 'status': 'ACTIVE'}
         query = 'mutation($product:ProductUpdateInput!){productUpdate(product:$product){product{id} userErrors{field message}}}'
         mutation_result(await shopify_graphql(domain, token, query, {'product': update}), 'productUpdate', 'product')
@@ -1568,18 +1572,26 @@ async def upload_product(product_id:int, request:Request):
                      'tags':['4GMC', 'GMC-ready', gmc['product_type']],
                      'metafields':gmc_metafields}
     remote_id = product['shopify_id']
-    if not remote_id:
-        found = await shopify_graphql(domain,token,'query($identifier:ProductIdentifierInput!){productByIdentifier(identifier:$identifier){id title descriptionHtml handle}}',{'identifier':{'handle':handle}})
-        existing = found.get('productByIdentifier')
-        if existing:
-            remote_id = existing['id']
     expected_status = 'DRAFT'
     if remote_id:
         preflight = await shopify_graphql(domain,token,'query($identifier:ProductIdentifierInput!){productByIdentifier(identifier:$identifier){id status}}',{'identifier':{'id':remote_id}})
         remote_product = preflight.get('productByIdentifier')
-        if not remote_product or remote_product.get('status') not in {'DRAFT', 'ACTIVE'}:
-            fail('This Shopify product has an unexpected status. Check it in Shopify before updating.',409)
-        expected_status = remote_product['status']
+        if not remote_product:
+            remote_id = None
+            with db() as c: c.execute("UPDATE products SET shopify_id='' WHERE id=?", (product_id,))
+        elif remote_product.get('status') not in {'DRAFT', 'ACTIVE', 'ARCHIVED'}:
+            fail('This Shopify product has an unexpected status. Check it in Shopify before updating.', 409)
+        else:
+            expected_status = 'DRAFT' if remote_product['status'] == 'ARCHIVED' else remote_product['status']
+
+    if not remote_id:
+        found = await shopify_graphql(domain,token,'query($identifier:ProductIdentifierInput!){productByIdentifier(identifier:$identifier){id title descriptionHtml handle status}}',{'identifier':{'handle':handle}})
+        existing = found.get('productByIdentifier')
+        if existing and existing.get('status') in {'DRAFT', 'ACTIVE', 'ARCHIVED'}:
+            remote_id = existing['id']
+            expected_status = 'DRAFT' if existing['status'] == 'ARCHIVED' else existing['status']
+
+    if remote_id:
         update = dict(product_input,id=remote_id,status=expected_status)
         query = 'mutation($product:ProductUpdateInput!){productUpdate(product:$product){product{id} userErrors{field message}}}'
         mutation_result(await shopify_graphql(domain,token,query,{'product':update}),'productUpdate','product')
