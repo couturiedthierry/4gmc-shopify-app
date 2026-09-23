@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY server.py shopify_usa.py site_kit.py image_pipeline.py catalog_rules.py local_launcher.py ./
+COPY *.py ./
 COPY static ./static
 
 RUN mkdir -p /app/data
