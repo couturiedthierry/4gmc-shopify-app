@@ -1238,15 +1238,18 @@ def update_product(product_id: int, data: ProductUpdate, request: Request):
     return {'ok':True}
 
 async def ai_json(prompt, max_tokens=700):
-    gemini_key = (os.environ.get('GEMINI_API_KEY2', '') or os.environ.get('GEMINI_API_KEY', '') or GEMINI_API_KEY2 or GEMINI_API_KEY).strip()
+    gemini_keys = []
+    for k in (os.environ.get('GEMINI_API_KEY2', ''), os.environ.get('GEMINI_API_KEY', ''), GEMINI_API_KEY2, GEMINI_API_KEY):
+        clean = str(k or '').strip()
+        if clean and clean not in gemini_keys:
+            gemini_keys.append(clean)
     smart_key = (os.environ.get('SMARTAPI_KEY', '') or SMARTAPI_KEY).strip()
 
-    if not (gemini_key or smart_key):
-        fail('Configure the Gemini API key (GEMINI_API_KEY2 or GEMINI_API_KEY) in environment variables', 502)
+    if not (gemini_keys or smart_key):
+        fail('Configure the Gemini API key in environment variables', 502)
 
     gemini_errors = []
-    # 1. Primary: If a Gemini key is configured, execute via Google Gemini REST API
-    if gemini_key:
+    if gemini_keys:
         models = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite']
         headers = {'Content-Type': 'application/json'}
         payload = {
@@ -1257,36 +1260,43 @@ async def ai_json(prompt, max_tokens=700):
                 'responseMimeType': 'application/json'
             }
         }
-        for model in models:
-            url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}'
-            try:
-                async with httpx.AsyncClient(timeout=90, follow_redirects=False) as client:
-                    response = await client.post(url, headers=headers, json=payload)
-                if response.status_code == 200:
-                    try:
-                        data = response.json()
-                    except ValueError:
-                        fail('AI service returned an invalid response', 502)
-                    candidates = data.get('candidates', [])
-                    if candidates and isinstance(candidates, list):
-                        parts = candidates[0].get('content', {}).get('parts', [])
-                        answer = ''.join(p.get('text', '') for p in parts if isinstance(p, dict)).strip()
-                        match = re.search(r'\{.*\}', answer, re.S)
-                        if match:
-                            try:
-                                return json.loads(match.group())
-                            except ValueError:
-                                pass
-                else:
-                    try:
-                        err_detail = response.json().get('error', {}).get('message', response.text[:150])
-                    except Exception:
-                        err_detail = response.text[:150]
-                    gemini_errors.append(f'{model}: HTTP {response.status_code} ({err_detail})')
-            except httpx.TimeoutException:
-                fail('Gemini API took too long to respond. Page generation can be retried safely.', 504)
-            except httpx.RequestError as req_err:
-                gemini_errors.append(f'{model}: Connection failed ({str(req_err)})')
+        for g_key in gemini_keys:
+            key_failed = False
+            for model in models:
+                url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={g_key}'
+                try:
+                    async with httpx.AsyncClient(timeout=90, follow_redirects=False) as client:
+                        response = await client.post(url, headers=headers, json=payload)
+                    if response.status_code == 200:
+                        try:
+                            data = response.json()
+                        except ValueError:
+                            fail('AI service returned an invalid response', 502)
+                        candidates = data.get('candidates', [])
+                        if candidates and isinstance(candidates, list):
+                            parts = candidates[0].get('content', {}).get('parts', [])
+                            answer = ''.join(p.get('text', '') for p in parts if isinstance(p, dict)).strip()
+                            match = re.search(r'\{.*\}', answer, re.S)
+                            if match:
+                                try:
+                                    return json.loads(match.group())
+                                except ValueError:
+                                    pass
+                    elif response.status_code in (401, 403):
+                        key_failed = True
+                        break
+                    else:
+                        try:
+                            err_detail = response.json().get('error', {}).get('message', response.text[:150])
+                        except Exception:
+                            err_detail = response.text[:150]
+                        gemini_errors.append(f'{model}: HTTP {response.status_code} ({err_detail})')
+                except httpx.TimeoutException:
+                    fail('Gemini API took too long to respond. Page generation can be retried safely.', 504)
+                except httpx.RequestError as req_err:
+                    gemini_errors.append(f'{model}: Connection failed ({str(req_err)})')
+            if not key_failed and len(gemini_errors) == 0:
+                break
 
         if gemini_errors and not smart_key:
             fail(f'Google Gemini API error: {gemini_errors[0]}', 502)
