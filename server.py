@@ -1227,7 +1227,7 @@ async def ai_json(prompt, max_tokens=700):
     gemini_errors = []
     # 1. Primary: If a Gemini key is configured, execute via Google Gemini REST API
     if gemini_key:
-        models = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-pro']
+        models = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite']
         headers = {'Content-Type': 'application/json'}
         payload = {
             'contents': [{'parts': [{'text': prompt}]}],
