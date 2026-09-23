@@ -36,6 +36,10 @@ def _public_image_url(url: str) -> None:
 
 
 async def _download_reference(client: httpx.AsyncClient, url: str) -> tuple[str, bytes]:
+    if isinstance(url, str) and url.startswith("//"):
+        url = "https:" + url
+    elif isinstance(url, str) and url.startswith("http://"):
+        url = "https://" + url[7:]
     _public_image_url(url)
     try:
         async with client.stream("GET", url, headers={"Accept": "image/png,image/jpeg,image/webp"}) as response:

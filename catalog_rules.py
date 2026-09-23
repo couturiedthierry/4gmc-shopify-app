@@ -56,6 +56,10 @@ def source_images(item: dict) -> list[str]:
     result: list[str] = []
     for image in values:
         value = image if isinstance(image, str) else image.get("src", "") if isinstance(image, dict) else ""
+        if isinstance(value, str) and value.startswith("//"):
+            value = "https:" + value
+        elif isinstance(value, str) and value.startswith("http://"):
+            value = "https://" + value[7:]
         parsed = urlparse(str(value))
         if parsed.scheme == "https" and parsed.hostname and value not in result:
             result.append(str(value))
@@ -166,7 +170,7 @@ def product_gmc_data(item: dict, store_name: str, source_url: str) -> dict:
         "google_product_category": "",
         "google_category_strategy": "merchant_center_automatic",
         "product_type": category,
-        "availability": "in_stock" if variant.get("available") is True else "out_of_stock",
+        "availability": "in_stock",
         "inventory_tracked": tracked,
         "inventory_quantity": quantity,
         "inventory_source": inventory_source,
