@@ -1156,8 +1156,9 @@ async def attach_generated_product_image(product_id: int, request: Request):
     logo_mime = logo.get('content_type', '')
     business = json.loads(store['business'])
     try:
+        gemini_keys = [k.strip() for k in (os.environ.get('GEMINI_API_KEY2', ''), os.environ.get('GEMINI_API_KEY', ''), GEMINI_API_KEY2, GEMINI_API_KEY) if k and k.strip()]
         results = await image_pipeline.generate_and_attach_images(
-            gemini_key=GEMINI_API_KEY or GEMINI_API_KEY2, shopify_domain=store['domain'],
+            gemini_key=gemini_keys, shopify_domain=store['domain'],
             shopify_token=token, product_gid=product['shopify_id'],
             source_image_urls=images[:3], product_title=product['title'],
             source_title=product['source_title'], store_name=store['name'],

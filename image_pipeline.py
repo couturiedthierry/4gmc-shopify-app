@@ -103,9 +103,13 @@ def _role_prompt(role: str, *, product_title: str, source_title: str, store_name
     return shared + role_text
 
 
-async def _generate_png(client: httpx.AsyncClient, *, gemini_key: str, prompt: str,
+async def _generate_png(client: httpx.AsyncClient, *, gemini_key: str | list[str], prompt: str,
                         source_mime: str, source_bytes: bytes,
                         logo_mime: str = "", logo_bytes: bytes | None = None) -> str:
+    keys = [gemini_key] if isinstance(gemini_key, str) else list(gemini_key)
+    keys = [k.strip() for k in keys if isinstance(k, str) and k.strip()]
+    if not keys:
+        raise ImagePipelineError("Gemini image generation is not configured.")
     parts = [
         {"text": prompt},
         {"inline_data": {"mime_type": source_mime,
@@ -115,17 +119,25 @@ async def _generate_png(client: httpx.AsyncClient, *, gemini_key: str, prompt: s
         parts.append({"text": "This second reference is the exact destination logo. Preserve its spelling and proportions."})
         parts.append({"inline_data": {"mime_type": logo_mime,
                                       "data": base64.b64encode(logo_bytes).decode("ascii")}})
-    try:
-        response = await client.post(
-            GEMINI_URL,
-            headers={"x-goog-api-key": gemini_key, "Content-Type": "application/json"},
-            json={"contents": [{"parts": parts}],
-                  "generationConfig": {"responseModalities": ["IMAGE"]}},
-        )
-    except httpx.RequestError as error:
-        raise ImagePipelineError("The image pipeline could not reach Gemini.") from error
-    if response.status_code != 200:
-        raise ImagePipelineError(f"Gemini image generation failed (HTTP {response.status_code}).")
+    last_status = None
+    response = None
+    for key in keys:
+        try:
+            res = await client.post(
+                GEMINI_URL,
+                headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+                json={"contents": [{"parts": parts}],
+                      "generationConfig": {"responseModalities": ["IMAGE"]}},
+            )
+            if res.status_code == 200:
+                response = res
+                break
+            last_status = res.status_code
+        except httpx.RequestError as error:
+            last_status = "network"
+            continue
+    if response is None or response.status_code != 200:
+        raise ImagePipelineError(f"Gemini image generation failed (HTTP {last_status}).")
     try:
         response_parts = response.json()["candidates"][0]["content"]["parts"]
         inline = next(part["inlineData"] for part in response_parts
@@ -208,14 +220,15 @@ async def _attach(client: httpx.AsyncClient, *, shopify_domain: str, shopify_tok
 
 
 async def generate_and_attach_images(
-    *, gemini_key: str, shopify_domain: str, shopify_token: str, product_gid: str,
+    *, gemini_key: str | list[str], shopify_domain: str, shopify_token: str, product_gid: str,
     source_image_urls: list[str], product_title: str, source_title: str, store_name: str,
     primary_color: str = "#2251dc", accent_color: str = "#6f9cff",
     brand_style: str = "", target_audience: str = "", product_facts: str = "",
     logo_mime: str = "", logo_bytes: bytes | None = None,
     roles: tuple[str, ...] = IMAGE_ROLES, client: httpx.AsyncClient | None = None,
 ) -> list[dict]:
-    if not gemini_key:
+    keys = [gemini_key] if isinstance(gemini_key, str) else list(gemini_key)
+    if not any(k and str(k).strip() for k in keys):
         raise ImagePipelineError("Gemini image generation is not configured.")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*\.myshopify\.com", shopify_domain):
         raise ImagePipelineError("The Shopify store address is invalid.")
