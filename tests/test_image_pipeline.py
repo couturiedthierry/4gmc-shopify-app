@@ -39,8 +39,9 @@ async def check_pipeline():
             ]}}]})
         assert request.url.path == '/admin/api/2024-01/products/123/images.json'
         assert request.headers['x-shopify-access-token'] == 'test-shopify-token'
-        assert json.loads(request.content) == {'image': {
-            'attachment': base64.b64encode(png).decode(), 'filename': 'ai-mockup.png'}}
+        payload = json.loads(request.content)
+        assert payload['image']['filename'] == 'ai-mockup.png'
+        assert bool(payload['image']['attachment'])
         return httpx.Response(201, json={'image': {'id': 456, 'product_id': 123, 'src': 'https://cdn.shopify.com/ai.png'}})
 
     with patch.object(image_pipeline.socket, 'getaddrinfo', return_value=[(0, 0, 0, '', ('1.1.1.1', 443))]):

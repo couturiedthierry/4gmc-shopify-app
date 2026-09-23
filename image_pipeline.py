@@ -234,6 +234,9 @@ async def _attach(client: httpx.AsyncClient, *, shopify_domain: str, shopify_tok
     return {"image_id": image_id, "product_id": product_id, "src": uploaded.get("src", "")}
 
 
+import gmc_engine
+
+
 async def generate_and_attach_images(
     *, gemini_key: str | list[str], shopify_domain: str, shopify_token: str, product_gid: str,
     source_image_urls: list[str], product_title: str, source_title: str, store_name: str,
@@ -262,30 +265,73 @@ async def generate_and_attach_images(
         for url in source_image_urls[:len(roles)]:
             references.append(await _download_reference(client, url))
         results: list[dict] = []
+        primary_source_mime, primary_source_bytes = references[0]
+
+        # Product Identity Lock
+        product_identity = gmc_engine.build_product_identity(
+            primary_source_bytes, source_title=source_title, product_facts=product_facts, sku=product_gid.split('/')[-1]
+        )
+        subject_rgba, subject_bbox = gmc_engine.segment_product(primary_source_bytes)
+
+        role_mode_map = {"hero": "gmc_main", "detail": "gmc_additional", "lifestyle": "gmc_lifestyle"}
+
         for index, role in enumerate(roles):
             source_mime, source_bytes = references[min(index, len(references) - 1)]
+            mode = role_mode_map.get(role, "gmc_main")
             prompt = _role_prompt(
                 role, product_title=product_title, source_title=source_title,
                 store_name=store_name, primary_color=primary_color,
                 accent_color=accent_color, brand_style=brand_style,
                 target_audience=target_audience, product_facts=product_facts,
             )
-            encoded = await _generate_png(
-                client, gemini_key=gemini_key, prompt=prompt,
-                source_mime=source_mime, source_bytes=source_bytes,
-                logo_mime=logo_mime, logo_bytes=logo_bytes,
-                logo_dark_mime=logo_dark_mime, logo_dark_bytes=logo_dark_bytes,
-            )
-            if logo_bytes or logo_dark_bytes:
-                encoded = _add_corner_logo(encoded, logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes)
+
+            final_raw = None
+            last_validation = None
+
+            # Retry loop (up to 3 attempts)
+            for attempt in range(1, 4):
+                encoded = await _generate_png(
+                    client, gemini_key=gemini_key, prompt=prompt,
+                    source_mime=source_mime, source_bytes=source_bytes,
+                    logo_mime=logo_mime, logo_bytes=logo_bytes,
+                    logo_dark_mime=logo_dark_mime, logo_dark_bytes=logo_dark_bytes,
+                )
+
+                gen_bytes = base64.b64decode(encoded, validate=True)
+                try:
+                    with Image.open(BytesIO(gen_bytes)) as gen_img:
+                        scene_bg = gen_img.convert("RGBA")
+                except (UnidentifiedImageError, OSError, ValueError):
+                    scene_bg = gmc_engine.generate_background_scene(mode=mode, target_size=(1500, 1500))
+
+                composited = gmc_engine.composite_product_on_scene(
+                    subject_rgba, scene_bg, mode=mode, logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes
+                )
+                out = BytesIO()
+                composited.save(out, format="PNG")
+                candidate_raw = out.getvalue()
+
+                validation = gmc_engine.validateProductImage(source_bytes, candidate_raw, product_identity, mode=mode)
+                last_validation = validation
+                if validation["passed"] or attempt == 3:
+                    if not validation["passed"] and attempt == 3:
+                        # Fail closed if compliance/accuracy failed
+                        raise ImagePipelineError(f"GMC Image Engine validation failed after 3 attempts: {', '.join(validation['problems'])}")
+                    final_raw = gmc_engine.embed_gmc_ai_metadata(candidate_raw, mode=mode)
+                    encoded = base64.b64encode(final_raw).decode("ascii")
+                    break
+
             result = await _attach(
                 client, shopify_domain=shopify_domain, shopify_token=shopify_token,
                 product_id=match.group(1), encoded=encoded,
                 filename=("ai-mockup.png" if roles == ("hero",) else f"4gmc-{role}.png"),
             )
             result["role"] = role
+            result["gmc_mode"] = mode
             result["corner_logo"] = bool(logo_bytes or logo_dark_bytes)
             result["product_logo_placements"] = "up_to_3_physical_surfaces"
+            result["gmc_validation"] = last_validation
+            result["product_identity"] = product_identity.to_dict()
             results.append(result)
         return results
     finally:
