@@ -1530,15 +1530,6 @@ async def upload_product(product_id:int, request:Request):
         fail('Review the current product content before uploading')
     token = await token_for(store)
     domain = store['domain']
-    shop = await shopify_graphql(domain,token,'query{shop{currencyCode}}')
-    actual_currency = (shop.get('shop') or {}).get('currencyCode','')
-    if actual_currency:
-        business = json.loads(store['business'])
-        if business.get('currency') != actual_currency:
-            business['currency'] = actual_currency
-            with db() as c:
-                c.execute('UPDATE stores SET business=? WHERE id=1', (json.dumps(business),))
-                event(c, 1, f'Updated business profile currency to {actual_currency} to match Shopify')
     handle = f'gmc-studio-product-{product_id}'
     gmc = json.loads(product['gmc_data'] or '{}')
     gmc_metafields = [
