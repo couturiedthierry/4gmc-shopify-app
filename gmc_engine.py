@@ -158,6 +158,261 @@ class BrandCompositor:
 
 
 @dataclass
+class LogoAnchor:
+    view_id: str = "front"
+    surface_id: str = "main_body_surface"
+    polygon_coordinates: list[tuple[float, float]] = field(default_factory=list)
+    x_pct: float = 50.0
+    y_pct: float = 42.0
+    scale_pct: float = 18.0
+    rotation_deg: float = 0.0
+    opacity: float = 1.0
+    logo_variant: str = "auto"
+    luminance_threshold: float = 140.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class BrandKit:
+    brand_name: str = ""
+    primary_color: str = "#2251dc"
+    secondary_color: str = "#6f9cff"
+    accent_color: str = "#ff6753"
+    logo_original_bytes: bytes | None = None
+    logo_white_bytes: bytes | None = None
+    logo_black_bytes: bytes | None = None
+    logo_mime: str = "image/png"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "brand_name": self.brand_name,
+            "primary_color": self.primary_color,
+            "secondary_color": self.secondary_color,
+            "accent_color": self.accent_color,
+            "has_logo_original": bool(self.logo_original_bytes),
+            "has_logo_white": bool(self.logo_white_bytes),
+            "has_logo_black": bool(self.logo_black_bytes),
+        }
+
+
+@dataclass
+class ProductIdentityProfile:
+    product_id: str = ""
+    original_images: list[str] = field(default_factory=list)
+    canonical_views: dict[str, str] = field(default_factory=dict)
+    master_masks: dict[str, str] = field(default_factory=dict)
+    editable_masks: dict[str, str] = field(default_factory=dict)
+    locked_masks: dict[str, str] = field(default_factory=dict)
+    product_geometry_descriptor: dict[str, Any] = field(default_factory=dict)
+    brand_config: dict[str, Any] = field(default_factory=dict)
+    approved_logo_anchors: list[dict[str, Any]] = field(default_factory=list)
+    approved_colors: list[str] = field(default_factory=list)
+    validation_data: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+class ProductIdentityManager:
+    """Creates, persists, and loads ProductIdentityProfiles across all generations for a product."""
+
+    def __init__(self, storage_dir: str | Path | None = None):
+        self.storage_dir = Path(storage_dir) if storage_dir else Path(__file__).resolve().parent / "data" / "profiles"
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self._profiles: dict[str, ProductIdentityProfile] = {}
+
+    def get_profile(self, product_id: str) -> ProductIdentityProfile | None:
+        if product_id in self._profiles:
+            return self._profiles[product_id]
+        file_path = self.storage_dir / f"{product_id}.json"
+        if file_path.is_file():
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    profile = ProductIdentityProfile(**data)
+                    self._profiles[product_id] = profile
+                    return profile
+            except Exception:
+                pass
+        return None
+
+    def save_profile(self, profile: ProductIdentityProfile) -> None:
+        self._profiles[profile.product_id] = profile
+        file_path = self.storage_dir / f"{profile.product_id}.json"
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(profile.to_dict(), f, indent=2)
+        except Exception:
+            pass
+
+
+class CanonicalViewManager:
+    """Creates and manages isolated RGBA canonical views with transparent backgrounds."""
+
+    @staticmethod
+    def create_canonical_view(source_bytes: bytes, view_id: str = "front") -> tuple[Image.Image, Image.Image]:
+        subject_rgba, bbox = segment_product(source_bytes)
+        alpha = subject_rgba.split()[3]
+        return subject_rgba, alpha
+
+
+class ProductSegmentationService:
+    """Segments canonical product into EDITABLE and LOCKED region masks."""
+
+    @staticmethod
+    def segment_regions(subject_rgba: Image.Image) -> tuple[Image.Image, Image.Image]:
+        alpha = subject_rgba.split()[3]
+        rgb = subject_rgba.convert("RGB")
+        hsv = rgb.convert("HSV")
+
+        h_chan, s_chan, v_chan = hsv.split()
+        s_pixels = _img_pixels(s_chan)
+        v_pixels = _img_pixels(v_chan)
+
+        editable_data = []
+        locked_data = []
+
+        for s_val, v_val in zip(s_pixels, v_pixels):
+            s_num = s_val if isinstance(s_val, int) else s_val[0]
+            v_num = v_val if isinstance(v_val, int) else v_val[0]
+
+            if s_num > 30 and 20 < v_num < 245:
+                editable_data.append(255)
+                locked_data.append(0)
+            else:
+                editable_data.append(0)
+                locked_data.append(255)
+
+        editable_mask = Image.new("L", subject_rgba.size)
+        editable_mask.putdata(editable_data)
+        editable_mask = Image.composite(editable_mask, Image.new("L", subject_rgba.size, 0), alpha)
+
+        locked_mask = Image.new("L", subject_rgba.size)
+        locked_mask.putdata(locked_data)
+        locked_mask = Image.composite(locked_mask, Image.new("L", subject_rgba.size, 0), alpha)
+
+        return editable_mask, locked_mask
+
+
+class EditableRegionManager:
+    """Provides inspectable region mask structures."""
+
+    @staticmethod
+    def get_region_masks(subject_rgba: Image.Image) -> dict[str, Image.Image]:
+        editable, locked = ProductSegmentationService.segment_regions(subject_rgba)
+        return {
+            "editable_main_body": editable,
+            "locked_components": locked,
+        }
+
+
+class BrandKitManager:
+    """Manages BrandKit objects and guarantees zero text logo hallucination."""
+
+    def __init__(self, brand_name: str, primary_color: str, secondary_color: str = "",
+                 accent_color: str = "", logo_bytes: bytes | None = None,
+                 logo_dark_bytes: bytes | None = None):
+        self.brand_kit = BrandKit(
+            brand_name=brand_name,
+            primary_color=primary_color,
+            secondary_color=secondary_color or primary_color,
+            accent_color=accent_color or primary_color,
+            logo_original_bytes=logo_bytes,
+            logo_white_bytes=logo_bytes,
+            logo_black_bytes=logo_dark_bytes or logo_bytes,
+        )
+
+
+class ProductRecolorService:
+    """Luminance and material-preserving product recoloring applied BEFORE scene generation ONLY on editable masks."""
+
+    @staticmethod
+    def recolor(subject_rgba: Image.Image, editable_mask: Image.Image, primary_hex: str, accent_hex: str = "") -> Image.Image:
+        if not primary_hex or not primary_hex.startswith("#") or len(primary_hex) != 7:
+            return subject_rgba
+        try:
+            target_h, target_s, _ = Image.new("RGB", (1, 1), primary_hex).convert("HSV").getpixel((0, 0))
+        except Exception:
+            return subject_rgba
+
+        output = subject_rgba.copy()
+        alpha = output.split()[3]
+        hsv = output.convert("RGB").convert("HSV")
+        _, _, v_chan = hsv.split()
+
+        new_h_chan = Image.new("L", subject_rgba.size, target_h)
+        new_s_chan = Image.new("L", subject_rgba.size, max(target_s, 150))
+        recolored_hsv = Image.merge("HSV", (new_h_chan, new_s_chan, v_chan))
+        recolored_rgba = recolored_hsv.convert("RGB").convert("RGBA")
+        recolored_rgba.putalpha(alpha)
+
+        smoothed_mask = editable_mask.filter(ImageFilter.GaussianBlur(radius=1))
+        return Image.composite(recolored_rgba, output, smoothed_mask)
+
+
+class LogoPlacementService:
+    """Deterministic logo placement using persistent LogoAnchor mappings and surface luminance detection."""
+
+    @staticmethod
+    def place_logo(subject_rgba: Image.Image, anchor: LogoAnchor, logo_bytes: bytes | None = None,
+                   logo_dark_bytes: bytes | None = None) -> Image.Image:
+        if not logo_bytes and not logo_dark_bytes:
+            return subject_rgba
+
+        canvas = subject_rgba.convert("RGBA").copy()
+        tw, th = canvas.size
+
+        target_x = int(tw * (anchor.x_pct / 100.0))
+        target_y = int(th * (anchor.y_pct / 100.0))
+        sample_size = max(20, int(min(tw, th) * 0.10))
+        box = (
+            max(0, target_x - sample_size // 2),
+            max(0, target_y - sample_size // 2),
+            min(tw, target_x + sample_size // 2),
+            min(th, target_y + sample_size // 2),
+        )
+        sample_crop = canvas.crop(box).convert("L")
+        pixels = _img_pixels(sample_crop)
+        avg_lum = sum(pixels) / len(pixels) if pixels else 255.0
+
+        selected_bytes = logo_dark_bytes if (avg_lum > anchor.luminance_threshold and logo_dark_bytes) else (logo_bytes or logo_dark_bytes)
+
+        if not selected_bytes:
+            return canvas
+
+        try:
+            with Image.open(BytesIO(selected_bytes)) as src_logo:
+                logo = src_logo.convert("RGBA")
+            target_w = max(1, int(tw * (anchor.scale_pct / 100.0)))
+            l_scale = target_w / max(1, logo.width)
+            target_h = max(1, int(logo.height * l_scale))
+            resized_logo = logo.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+            if abs(anchor.rotation_deg) > 0.1:
+                resized_logo = resized_logo.rotate(-anchor.rotation_deg, expand=True, resample=Image.Resampling.BICUBIC)
+
+            lx = max(0, min(tw - resized_logo.width, target_x - resized_logo.width // 2))
+            ly = max(0, min(th - resized_logo.height, target_y - resized_logo.height // 2))
+
+            overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+            overlay.paste(resized_logo, (lx, ly), resized_logo)
+            return Image.alpha_composite(canvas, overlay)
+        except Exception:
+            return canvas
+
+
+class ProductValidationService:
+    """Multi-metric Product Identity Validation stage."""
+
+    @staticmethod
+    def validate(source_bytes: bytes, generated_bytes: bytes, identity: ProductIdentity,
+                 mode: str = "gmc_main") -> dict[str, Any]:
+        return validateProductImage(source_bytes, generated_bytes, identity, mode=mode)
+
+
+@dataclass
 class ProductIdentity:
     sku: str = ""
     source_title: str = ""
