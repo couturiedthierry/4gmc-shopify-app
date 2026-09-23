@@ -66,36 +66,30 @@ async def _download_reference(client: httpx.AsyncClient, url: str) -> tuple[str,
 def _role_prompt(role: str, *, product_title: str, source_title: str, store_name: str,
                  primary_color: str, accent_color: str, brand_style: str,
                  target_audience: str, product_facts: str) -> str:
+    primary = primary_color.strip() if primary_color else '#2251dc'
+    accent = accent_color.strip() if accent_color else '#6f9cff'
     shared = (
         f"Create a photorealistic square ecommerce image for the exact source product {source_title}. "
-        f"Destination private-label brand: {store_name}. The complete visible brand word must be exactly "
-        f"{store_name}, with no spelling changes. Palette: {primary_color} and {accent_color}. "
+        f"Destination private-label brand: {store_name}. Brand color palette: primary={primary}, accent={accent}. "
         f"Visual direction: {brand_style or 'clean, credible, premium ecommerce photography'}. "
         f"Audience: {target_audience or 'everyday shoppers in the United States'}. "
-        "The source photo is the product-of-record. Preserve its geometry, components, materials, seams, "
-        "hardware, controls, straps, fasteners, proportions, variant color, and included pieces. "
-        "Do not invent or remove features, accessories, text, certifications, performance claims, safety marks, "
-        "barcodes, or source-store branding. Apply the exact supplied destination logo to one or more physically "
-        "plausible product surfaces such as a housing, fabric panel, handle badge, label, case, or package. When "
-        "the product has several separate brandable surfaces, use the logo on up to three of them, following the "
-        "reference placement style, without covering controls, warnings, seams, or functional parts. Never redraw, "
-        "restyle, abbreviate, or misspell the logo. Reserve a quiet area in the top-left corner because the exact "
-        "uploaded logo will also be added there after generation. Product fidelity is more important than decoration. "
-        f"Verified source facts: {product_facts[:1800]}. Final listing title: {product_title}. "
+        f"1. BRAND COLOR RECOLORING: Re-color and rebrand the product's main painted exterior surfaces, body panels, housing, enclosure, and major frame sections using the destination primary brand color ({primary}) and accent color ({accent}). Replace the original source product's body paint color (such as green, blue, yellow, or orange) with the primary brand color ({primary}) on main body shells, and accent color ({accent}) on trim sections. Keep unpainted functional components (rubber tires, steel/chrome engine parts, black cables, glass, controls) in their natural material finishes. "
+        f"2. 3D PERSPECTIVE & NATURAL LOGO PLACEMENT: Apply the exact supplied destination logo to one or more physically plausible product surfaces. When the product has several separate brandable surfaces, use the logo on up to three of them, following the reference placement style. All logos printed on physical product surfaces MUST strictly conform to the 3D perspective, camera angle, surface curvature, material texture, and lighting/reflections of that exact surface. Do NOT draw flat, floating, or skewed 2D text labels. The logo must look 100% factory silk-screened or molded onto the product. "
+        f"3. CATALOG VISUAL SYNERGY & REALISM: Render the product with 100% photorealistic commercial quality. Preserve physical product geometry, components, controls, seams, and proportions. Do not invent or remove features or accessories. Maintain a consistent studio style across all catalog products so they look like a unified, high-end private-label brand line. Use a clean, seamless neutral studio background with soft contact floor shadows. Reserve a quiet space in the top-left corner because the exact uploaded logo will also be added there after generation. "
+        f"Verified source facts: {product_facts[:1500]}. Final listing title: {product_title}. "
     )
     role_text = {
         "hero": (
-            "Make the HERO image: full product visible and centered on a clean studio background, realistic "
-            "commercial lighting, accurate shadows, generous margins, no marketing callout text."
+            "Make the HERO image: full product visible and centered on a clean neutral studio background, realistic "
+            "commercial lighting, accurate soft floor shadow, generous margins, zero callout text."
         ),
         "detail": (
-            "Make the DETAIL image: a close three-quarter or macro view of one real material, construction, "
-            "closure, control, or functional feature that is visible in the reference. Do not add callout text."
+            "Make the DETAIL image: a close three-quarter macro shot highlighting the branded finish, material texture, "
+            "construction, or functional control visible in the reference. Zero callout text."
         ),
         "lifestyle": (
-            "Make the LIFESTYLE image: a natural, tidy home or outdoor use scene appropriate to the product. "
-            "Keep product scale and use physically correct, anatomy realistic when people or animals appear, "
-            "and do not add extra products."
+            "Make the LIFESTYLE image: a natural, tidy home or outdoor use environment appropriate to the product. "
+            "Keep product scale, perspective, and usage physically accurate."
         ),
     }.get(role)
     if not role_text:
@@ -160,7 +154,7 @@ async def _generate_png(client: httpx.AsyncClient, *, gemini_key: str | list[str
 
 
 def _add_corner_logo(encoded: str, logo_bytes: bytes) -> str:
-    """Embed the exact uploaded logo in the top-left corner of a generated PNG."""
+    """Embed the exact uploaded logo cleanly in the top-left corner of a generated PNG."""
     try:
         image_bytes = base64.b64decode(encoded, validate=True)
         with Image.open(BytesIO(image_bytes)) as source:
@@ -172,28 +166,16 @@ def _add_corner_logo(encoded: str, logo_bytes: bytes) -> str:
     if image.width < 128 or image.height < 128 or logo.width < 1 or logo.height < 1:
         raise ImagePipelineError("The generated image or uploaded logo has invalid dimensions.")
 
-    max_width = max(72, int(image.width * 0.30))
-    max_height = max(40, int(image.height * 0.14))
+    max_width = max(80, int(image.width * 0.28))
+    max_height = max(45, int(image.height * 0.12))
     scale = min(max_width / logo.width, max_height / logo.height, 1.0)
     logo = logo.resize((max(1, round(logo.width * scale)), max(1, round(logo.height * scale))), Image.Resampling.LANCZOS)
-    margin = max(12, round(min(image.size) * 0.025))
-    padding = max(8, round(min(image.size) * 0.012))
-    radius = max(8, round(min(image.size) * 0.014))
-    badge_size = (logo.width + padding * 2, logo.height + padding * 2)
+    margin_x = max(16, round(image.width * 0.035))
+    margin_y = max(16, round(image.height * 0.035))
 
-    shadow = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    shadow_draw = ImageDraw.Draw(shadow)
-    box = (margin + 3, margin + 5, margin + badge_size[0] + 3, margin + badge_size[1] + 5)
-    shadow_draw.rounded_rectangle(box, radius=radius, fill=(0, 0, 0, 65))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(max(2, radius // 3)))
-    image.alpha_composite(shadow)
-
-    badge = Image.new("RGBA", badge_size, (255, 255, 255, 242))
-    mask = Image.new("L", badge_size, 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, badge_size[0] - 1, badge_size[1] - 1), radius=radius, fill=255)
-    badge.putalpha(mask)
-    badge.alpha_composite(logo, (padding, padding))
-    image.alpha_composite(badge, (margin, margin))
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    overlay.paste(logo, (margin_x, margin_y), logo)
+    image = Image.alpha_composite(image, overlay)
 
     output = BytesIO()
     image.convert("RGB").save(output, format="PNG", optimize=True)
