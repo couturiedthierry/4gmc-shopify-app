@@ -1209,8 +1209,6 @@ async def publish_source_product(product_id: int, request: Request):
         with db() as c:
             c.execute("UPDATE products SET shopify_id='', status='draft' WHERE id=?", (product_id,))
         fail('The product was deleted in Shopify. Upload it again before publishing.', 409)
-    if remote.get('status') not in {'DRAFT', 'ACTIVE', 'ARCHIVED'}:
-        fail('Shopify product has an unexpected status. Check it in Shopify before publishing.', 409)
     pubs = await shopify_graphql(domain, token, 'query{publications(first:50){nodes{id name channels(first:2){nodes{handle name}}}}}')
     online = next((p for p in (pubs.get('publications') or {}).get('nodes', [])
                    if p.get('name', '').strip().lower() == 'online store' or
@@ -1218,7 +1216,7 @@ async def publish_source_product(product_id: int, request: Request):
                        for ch in ((p.get('channels') or {}).get('nodes') or []))), None)
     if not online:
         fail('The destination store has no accessible Online Store publication')
-    if remote['status'] in {'DRAFT', 'ARCHIVED'}:
+    if remote.get('status') != 'ACTIVE':
         update = {'id': remote_id, 'status': 'ACTIVE'}
         query = 'mutation($product:ProductUpdateInput!){productUpdate(product:$product){product{id} userErrors{field message}}}'
         mutation_result(await shopify_graphql(domain, token, query, {'product': update}), 'productUpdate', 'product')
@@ -1251,6 +1249,27 @@ def update_product(product_id: int, data: ProductUpdate, request: Request):
         c.execute('UPDATE products SET title=?,description=?,price=?,sku=?,gtin=?,status=?,reviewed_hash=? WHERE id=?',(data.title.strip(),data.description.strip(),data.price.strip(),data.sku.strip(),data.gtin.strip(),'draft','',product_id))
         event(c,1,f'Edited product: {data.title.strip()}')
     return {'ok':True}
+
+
+@app.post('/api/products/{product_id}/resync')
+def resync_product(product_id: int, request: Request):
+    require(request)
+    with db() as c:
+        product = c.execute('SELECT * FROM products WHERE id=? AND store_id=1', (product_id,)).fetchone()
+        if not product:
+            fail('Product not found', 404)
+        c.execute("UPDATE products SET shopify_id='', status='draft', ai_image_id='', ai_image_digest='', ai_image_url='', ai_image_manifest='', reviewed_hash='' WHERE id=?", (product_id,))
+        event(c, 1, f'Reset Shopify binding and cleared image cache for product: {product["title"]}')
+    return {'ok': True}
+
+
+@app.post('/api/products/reset-all')
+def reset_all_products(request: Request):
+    require(request)
+    with db() as c:
+        c.execute("UPDATE products SET shopify_id='', status='draft', ai_image_id='', ai_image_digest='', ai_image_url='', ai_image_manifest='', reviewed_hash='' WHERE store_id=1")
+        event(c, 1, 'Reset all Shopify bindings and product image manifests')
+    return {'ok': True}
 
 async def ai_json(prompt, max_tokens=700):
     gemini_keys = []
@@ -1579,17 +1598,15 @@ async def upload_product(product_id:int, request:Request):
         if not remote_product:
             remote_id = None
             with db() as c: c.execute("UPDATE products SET shopify_id='' WHERE id=?", (product_id,))
-        elif remote_product.get('status') not in {'DRAFT', 'ACTIVE', 'ARCHIVED'}:
-            fail('This Shopify product has an unexpected status. Check it in Shopify before updating.', 409)
         else:
-            expected_status = 'DRAFT' if remote_product['status'] == 'ARCHIVED' else remote_product['status']
+            expected_status = 'DRAFT' if remote_product.get('status') == 'ARCHIVED' else (remote_product.get('status') or 'DRAFT')
 
     if not remote_id:
         found = await shopify_graphql(domain,token,'query($identifier:ProductIdentifierInput!){productByIdentifier(identifier:$identifier){id title descriptionHtml handle status}}',{'identifier':{'handle':handle}})
         existing = found.get('productByIdentifier')
-        if existing and existing.get('status') in {'DRAFT', 'ACTIVE', 'ARCHIVED'}:
+        if existing:
             remote_id = existing['id']
-            expected_status = 'DRAFT' if existing['status'] == 'ARCHIVED' else existing['status']
+            expected_status = 'DRAFT' if existing.get('status') == 'ARCHIVED' else (existing.get('status') or 'DRAFT')
 
     if remote_id:
         update = dict(product_input,id=remote_id,status=expected_status)
@@ -1615,7 +1632,8 @@ async def upload_product(product_id:int, request:Request):
     read = await shopify_graphql(domain,token,'query($identifier:ProductIdentifierInput!){productByIdentifier(identifier:$identifier){id title descriptionHtml status handle vendor productType variants(first:2){nodes{id price sku barcode inventoryItem{tracked}}} media(first:10){nodes{id mediaContentType status}}}}',{'identifier':{'id':remote_id}})
     live = read.get('productByIdentifier') or {}
     variants = ((live.get('variants') or {}).get('nodes') or [])
-    verified = (live.get('id')==remote_id and live.get('title')==product['title'] and live.get('status')==expected_status and
+    verified = (live.get('id')==remote_id and live.get('title')==product['title'] and
+        str(live.get('status') or '').upper() == str(expected_status or '').upper() and
         plain_content(live.get('descriptionHtml'))==plain_content(product_input['descriptionHtml']) and len(variants)==1 and
         Decimal(str(variants[0]['price']))==Decimal(product['price']) and (variants[0].get('sku') or '')==product['sku'] and (variants[0].get('barcode') or '')==product['gtin'] and
         live.get('vendor')==gmc['brand'] and live.get('productType')==gmc['product_type'] and

@@ -137,4 +137,6 @@ with tempfile.TemporaryDirectory() as temp:
     after_switch=client.get('/api/state').json()
     assert after_switch['store']['connected'] is False
     assert after_switch['products'][0]['shopify_id']==''
+    assert client.post(f'/api/products/{product_id}/resync').status_code==200
+    assert client.post('/api/products/reset-all').status_code==200
 print('Product draft upload contract checks passed')
