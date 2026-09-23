@@ -131,16 +131,13 @@ def stable_sku(store_name: str, source_url: str, variant: dict) -> str:
     return f"{prefix}-{source_sku + '-' if source_sku else ''}{suffix}"[:64]
 
 
-def inventory_facts(variant: dict) -> tuple[bool, int | None, str]:
+def inventory_facts(variant: dict) -> tuple[bool, int, str]:
     for key in ("inventory_quantity", "quantity_available", "inventoryQuantity"):
         value = variant.get(key)
-        if isinstance(value, int) and value >= 0:
+        if isinstance(value, int) and value > 0:
             return True, value, "source_exact_quantity"
-    if variant.get("available") is True:
-        return False, None, "source_available_quantity_unknown"
-    if variant.get("available") is False:
-        return True, 0, "source_unavailable"
-    return False, None, "source_availability_unknown"
+    tracked = (variant.get("inventoryItem") or {}).get("tracked") if isinstance(variant.get("inventoryItem"), dict) else True
+    return bool(tracked if tracked is not None else True), 100, "automatic_default_100"
 
 
 def product_gmc_data(item: dict, store_name: str, source_url: str) -> dict:
@@ -171,8 +168,8 @@ def product_gmc_data(item: dict, store_name: str, source_url: str) -> dict:
         "google_category_strategy": "merchant_center_automatic",
         "product_type": category,
         "availability": "in_stock",
-        "inventory_tracked": tracked,
-        "inventory_quantity": quantity,
+        "inventory_tracked": True,
+        "inventory_quantity": quantity if (isinstance(quantity, int) and quantity > 0) else 100,
         "inventory_source": inventory_source,
         "selected_variant_id": str(variant.get("id") or ""),
         "selected_variant_title": str(variant.get("title") or ""),

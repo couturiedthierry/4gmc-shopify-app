@@ -1548,9 +1548,8 @@ async def sync_product_inventory(domain: str, token: str, product_id: str, produ
     inventory_item = variants[0].get('inventoryItem') or {}
     if not product['inventory_tracked']:
         return
-    quantity = product['inventory_quantity']
-    if quantity is None or quantity < 0:
-        fail('Tracked inventory requires an exact non-negative source quantity')
+    raw_qty = product['inventory_quantity']
+    quantity = raw_qty if (isinstance(raw_qty, int) and raw_qty > 0) else 100
     locations = await shopify_graphql(domain, token, 'query{locations(first:20){nodes{id name isActive}}}')
     location = next((item for item in (locations.get('locations') or {}).get('nodes', []) if item.get('isActive')), None)
     if not location:
@@ -1606,12 +1605,12 @@ async def upload_product(product_id:int, request:Request):
         gmc_metafields.append({'namespace':'custom','key':'google_product_category','type':'single_line_text_field','value':gmc['google_product_category']})
     if gmc.get('mpn'):
         gmc_metafields.append({'namespace':'custom','key':'gmc_mpn','type':'single_line_text_field','value':gmc['mpn']})
-    product_input = {'title':product['title'],'descriptionHtml':page_html(product['description']),'status':'DRAFT',
+    product_input = {'title':product['title'],'descriptionHtml':page_html(product['description']),'status':'ACTIVE',
                      'vendor':gmc['brand'],'productType':gmc['product_type'],
                      'tags':['4GMC', 'GMC-ready', gmc['product_type']],
                      'metafields':gmc_metafields}
     remote_id = product['shopify_id']
-    expected_status = 'DRAFT'
+    expected_status = 'ACTIVE'
     if remote_id:
         preflight = await shopify_graphql(domain,token,'query($identifier:ProductIdentifierInput!){productByIdentifier(identifier:$identifier){id status}}',{'identifier':{'id':remote_id}})
         remote_product = preflight.get('productByIdentifier')
@@ -1619,14 +1618,14 @@ async def upload_product(product_id:int, request:Request):
             remote_id = None
             with db() as c: c.execute("UPDATE products SET shopify_id='' WHERE id=?", (product_id,))
         else:
-            expected_status = 'DRAFT' if remote_product.get('status') == 'ARCHIVED' else (remote_product.get('status') or 'DRAFT')
+            expected_status = remote_product.get('status') or 'ACTIVE'
 
     if not remote_id:
         found = await shopify_graphql(domain,token,'query($identifier:ProductIdentifierInput!){productByIdentifier(identifier:$identifier){id title descriptionHtml handle status}}',{'identifier':{'handle':handle}})
         existing = found.get('productByIdentifier')
         if existing:
             remote_id = existing['id']
-            expected_status = 'DRAFT' if existing.get('status') == 'ARCHIVED' else (existing.get('status') or 'DRAFT')
+            expected_status = existing.get('status') or 'ACTIVE'
 
     if remote_id:
         update = dict(product_input,id=remote_id,status=expected_status)

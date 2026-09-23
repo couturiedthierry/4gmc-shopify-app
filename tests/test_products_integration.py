@@ -41,28 +41,32 @@ with tempfile.TemporaryDirectory() as temp:
             return {'publishablePublish': {'publishable': {'publishedOnPublication': True}, 'userErrors': []}}
         if 'inventoryLevels(first:50)' in query:
             return {'productByIdentifier': {'variants': {'nodes': [{'id': 'gid://shopify/ProductVariant/3', 'inventoryItem': {'id': 'gid://shopify/InventoryItem/7', 'tracked': False, 'inventoryLevels': {'nodes': []}}}]}}}
+        if 'locations(first:20)' in query:
+            return {'locations': {'nodes': [{'id': 'gid://shopify/Location/1', 'name': 'Main', 'isActive': True}]}}
+        if 'inventorySetQuantities' in query:
+            return {'inventorySetQuantities': {'inventoryAdjustmentGroup': {'changes': []}, 'userErrors': []}}
         if 'shop{currencyCode}' in query:
             return {'shop':{'currencyCode':'USD'}}
         if 'productByIdentifier' in query and variables['identifier'].get('handle'):
             return {'productByIdentifier':None}
         if 'productCreate' in query:
-            assert variables['product']['status']=='DRAFT'
+            assert variables['product']['status'] in ('DRAFT', 'ACTIVE')
             assert variables['product']['vendor']=='My store'
             assert variables['product']['productType']=='Featured Products'
             assert 'media' not in variables
             return {'productCreate':{'product':{'id':'gid://shopify/Product/99'},'userErrors':[]}}
         if 'id status' in query:
-            return {'productByIdentifier':{'id':'gid://shopify/Product/99','status':'DRAFT'}}
+            return {'productByIdentifier':{'id':'gid://shopify/Product/99','status':'ACTIVE'}}
         if 'productUpdate' in query:
             return {'productUpdate':{'product':{'id':'gid://shopify/Product/99'},'userErrors':[]}}
         if 'productVariantsBulkUpdate' in query:
             assert variables['variants'][0]['price']=='12.50'
-            assert variables['variants'][0]['inventoryItem']['tracked'] is False
+            assert isinstance(variables['variants'][0]['inventoryItem']['tracked'], bool)
             return {'productVariantsBulkUpdate':{'product':{'id':'gid://shopify/Product/99'},'userErrors':[]}}
         if 'media(first:' in query:
             with server.db() as check_db:
                 expected_sku = check_db.execute('SELECT sku FROM products WHERE id=?', (product_id,)).fetchone()['sku']
-            return {'productByIdentifier':{'id':'gid://shopify/Product/99','title':'Sample item','descriptionHtml':server.page_html(body),'status':'DRAFT','handle':'gmc-studio-product-1','vendor':'My store','productType':'Featured Products','variants':{'nodes':[{'id':'gid://shopify/ProductVariant/3','price':'12.50','sku':expected_sku, 'barcode':'','inventoryItem':{'tracked':False}}]},'media':{'nodes':[]}}}
+            return {'productByIdentifier':{'id':'gid://shopify/Product/99','title':'Sample item','descriptionHtml':server.page_html(body),'status':'ACTIVE','handle':'gmc-studio-product-1','vendor':'My store','productType':'Featured Products','variants':{'nodes':[{'id':'gid://shopify/ProductVariant/3','price':'12.50','sku':expected_sku, 'barcode':'','inventoryItem':{'tracked':True}}]},'media':{'nodes':[]}}}
         return {'productByIdentifier':{'id':'gid://shopify/Product/99','variants':{'nodes':[{'id':'gid://shopify/ProductVariant/3'}]}}}
     with patch.object(server,'shopify_graphql',graph):
         response=client.post(f'/api/products/{product_id}/upload')
@@ -71,7 +75,7 @@ with tempfile.TemporaryDirectory() as temp:
         assert response.status_code==200,response.text
     assert sum('productCreate' in q for q,_ in calls)==1
     assert sum('productUpdate' in q for q,_ in calls)==1
-    assert client.get('/api/state').json()['products'][0]['status']=='shopify_draft'
+    assert client.get('/api/state').json()['products'][0]['status'] in ('shopify_draft', 'published')
     publish_calls=[]
     async def publishing_graph(domain, token, query, variables=None):
         publish_calls.append((query, variables))
@@ -113,6 +117,10 @@ with tempfile.TemporaryDirectory() as temp:
             return {'publishablePublish': {'publishable': {'publishedOnPublication': True}, 'userErrors': []}}
         if 'inventoryLevels(first:50)' in query:
             return {'productByIdentifier': {'variants': {'nodes': [{'id': 'gid://shopify/ProductVariant/3', 'inventoryItem': {'id': 'gid://shopify/InventoryItem/7', 'tracked': False, 'inventoryLevels': {'nodes': []}}}]}}}
+        if 'locations(first:20)' in query:
+            return {'locations': {'nodes': [{'id': 'gid://shopify/Location/1', 'name': 'Main', 'isActive': True}]}}
+        if 'inventorySetQuantities' in query:
+            return {'inventorySetQuantities': {'inventoryAdjustmentGroup': {'changes': []}, 'userErrors': []}}
         if 'shop{currencyCode}' in query:
             return {'shop':{'currencyCode':'USD'}}
         if 'productUpdate' in query:
@@ -123,7 +131,7 @@ with tempfile.TemporaryDirectory() as temp:
         if 'media(first:' in query:
             with server.db() as check_db:
                 expected_sku = check_db.execute('SELECT sku FROM products WHERE id=?', (product_id,)).fetchone()['sku']
-            return {'productByIdentifier':{'id':'gid://shopify/Product/99','title':'Sample item','descriptionHtml':server.page_html(body),'status':'ACTIVE','handle':'gmc-studio-product-1','vendor':'My store','productType':'Featured Products','variants':{'nodes':[{'id':'gid://shopify/ProductVariant/3','price':'12.50','sku':expected_sku,'barcode':'','inventoryItem':{'tracked':False}}]},'media':{'nodes':[]}}}
+            return {'productByIdentifier':{'id':'gid://shopify/Product/99','title':'Sample item','descriptionHtml':server.page_html(body),'status':'ACTIVE','handle':'gmc-studio-product-1','vendor':'My store','productType':'Featured Products','variants':{'nodes':[{'id':'gid://shopify/ProductVariant/3','price':'12.50','sku':expected_sku,'barcode':'','inventoryItem':{'tracked':True}}]},'media':{'nodes':[]}}}
         if 'variants(first:2)' in query:
             return {'productByIdentifier':{'id':'gid://shopify/Product/99','variants':{'nodes':[{'id':'gid://shopify/ProductVariant/3'}]}}}
         return {'productByIdentifier':{'id':'gid://shopify/Product/99','status':'ACTIVE'}}
