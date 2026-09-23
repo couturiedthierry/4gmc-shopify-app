@@ -143,11 +143,17 @@ async def _generate_png(client: httpx.AsyncClient, *, gemini_key: str | list[str
         inline = next(part["inlineData"] for part in response_parts
                       if part.get("inlineData", {}).get("data"))
         encoded = inline["data"]
-        image_bytes = base64.b64decode(encoded, validate=True)
-    except (KeyError, IndexError, TypeError, ValueError, StopIteration) as error:
-        raise ImagePipelineError("Gemini did not return a usable base64 image.") from error
-    if inline.get("mimeType") != "image/png" or not image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
-        raise ImagePipelineError("Gemini did not return a PNG image.")
+        raw_bytes = base64.b64decode(encoded, validate=True)
+        if raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            image_bytes = raw_bytes
+        else:
+            with Image.open(BytesIO(raw_bytes)) as img:
+                out = BytesIO()
+                img.convert("RGBA").save(out, format="PNG")
+                image_bytes = out.getvalue()
+                encoded = base64.b64encode(image_bytes).decode("ascii")
+    except (KeyError, IndexError, TypeError, ValueError, StopIteration, UnidentifiedImageError, OSError) as error:
+        raise ImagePipelineError("Gemini did not return a usable image.") from error
     if len(image_bytes) > 20_000_000:
         raise ImagePipelineError("The generated image is too large for upload.")
     return encoded

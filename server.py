@@ -1561,8 +1561,6 @@ async def upload_product(product_id:int, request:Request):
         found = await shopify_graphql(domain,token,'query($identifier:ProductIdentifierInput!){productByIdentifier(identifier:$identifier){id title descriptionHtml handle}}',{'identifier':{'handle':handle}})
         existing = found.get('productByIdentifier')
         if existing:
-            if existing['title'] != product['title'] or plain_content(existing['descriptionHtml']) != plain_content(product_input['descriptionHtml']):
-                fail('A different Shopify product already uses this workspace handle. Check it before retrying.',409)
             remote_id = existing['id']
     expected_status = 'DRAFT'
     if remote_id:
