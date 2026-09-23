@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import re
+from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from io import BytesIO
 from typing import Any
@@ -22,6 +23,138 @@ from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageSt
 class GMCImageEngineError(Exception):
     """Raised when the GMC Product Image Engine fails to generate or validate an image."""
     pass
+
+
+class BrandCompositor:
+    """Programmatic compositing module to overlay official brand assets onto AI-generated blank products using brand_config.json coordinate mappings."""
+
+    def __init__(self, config_path: str | Path | None = None):
+        self.config = self._load_config(config_path)
+
+    def _load_config(self, config_path: str | Path | None = None) -> dict[str, Any]:
+        if config_path and Path(config_path).is_file():
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        default_file = Path(__file__).resolve().parent / "brand_config.json"
+        if default_file.is_file():
+            try:
+                with open(default_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {
+            "brand_profiles": {
+                "default": {
+                    "negative_prompts": ["text", "watermark", "logo", "branding", "words", "letters", "typography", "supplier logo"],
+                    "shot_types": {
+                        "hero": {"surface_overlay": {"x_pct": 50.0, "y_pct": 42.0, "scale_pct": 18.0, "rotation_deg": 0.0, "luminance_threshold": 140}},
+                        "detail": {"surface_overlay": {"x_pct": 48.0, "y_pct": 38.0, "scale_pct": 24.0, "rotation_deg": -5.0, "luminance_threshold": 140}},
+                        "lifestyle": {"surface_overlay": {"x_pct": 52.0, "y_pct": 45.0, "scale_pct": 16.0, "rotation_deg": 0.0, "luminance_threshold": 140}},
+                    }
+                }
+            }
+        }
+
+    def get_shot_config(self, role: str, profile_name: str = "default") -> dict[str, Any]:
+        profiles = self.config.get("brand_profiles", {})
+        profile = profiles.get(profile_name) or profiles.get("default", {})
+        shot_types = profile.get("shot_types", {})
+        return shot_types.get(role) or shot_types.get("hero", {})
+
+    def get_negative_prompts(self, profile_name: str = "default") -> list[str]:
+        profiles = self.config.get("brand_profiles", {})
+        profile = profiles.get(profile_name) or profiles.get("default", {})
+        return profile.get("negative_prompts", ["text", "watermark", "logo", "branding", "words", "letters"])
+
+    def composite(
+        self,
+        base_image: Image.Image,
+        role: str = "hero",
+        logo_bytes: bytes | None = None,
+        logo_dark_bytes: bytes | None = None,
+        profile_name: str = "default",
+    ) -> Image.Image:
+        """Composite brand logo overlay and corner badging onto blank base image based on shot_config."""
+        canvas = base_image.convert("RGBA").copy()
+        tw, th = canvas.size
+        shot_cfg = self.get_shot_config(role, profile_name)
+        overlay_cfg = shot_cfg.get("surface_overlay", {})
+        corner_cfg = shot_cfg.get("corner_badge", {})
+
+        # 1. Surface Overlay compositing
+        if logo_bytes or logo_dark_bytes:
+            x_pct = overlay_cfg.get("x_pct", 50.0)
+            y_pct = overlay_cfg.get("y_pct", 42.0)
+            scale_pct = overlay_cfg.get("scale_pct", 18.0)
+            rotation = overlay_cfg.get("rotation_deg", 0.0)
+            lum_thresh = overlay_cfg.get("luminance_threshold", 140)
+
+            target_x = int(tw * (x_pct / 100.0))
+            target_y = int(th * (y_pct / 100.0))
+            sample_size = max(20, int(min(tw, th) * 0.10))
+            box = (
+                max(0, target_x - sample_size // 2),
+                max(0, target_y - sample_size // 2),
+                min(tw, target_x + sample_size // 2),
+                min(th, target_y + sample_size // 2),
+            )
+            sample_crop = canvas.crop(box).convert("L")
+            pixels = _img_pixels(sample_crop)
+            avg_lum = sum(pixels) / len(pixels) if pixels else 255.0
+
+            selected_bytes = logo_dark_bytes if (avg_lum > lum_thresh and logo_dark_bytes) else (logo_bytes or logo_dark_bytes)
+
+            if selected_bytes:
+                try:
+                    with Image.open(BytesIO(selected_bytes)) as src_logo:
+                        logo = src_logo.convert("RGBA")
+                    target_w = max(1, int(tw * (scale_pct / 100.0)))
+                    l_scale = target_w / max(1, logo.width)
+                    target_h = max(1, int(logo.height * l_scale))
+                    resized_logo = logo.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+                    if abs(rotation) > 0.1:
+                        resized_logo = resized_logo.rotate(-rotation, expand=True, resample=Image.Resampling.BICUBIC)
+
+                    lx = max(0, min(tw - resized_logo.width, target_x - resized_logo.width // 2))
+                    ly = max(0, min(th - resized_logo.height, target_y - resized_logo.height // 2))
+
+                    overlay_layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+                    overlay_layer.paste(resized_logo, (lx, ly), resized_logo)
+                    canvas = Image.alpha_composite(canvas, overlay_layer)
+                except Exception:
+                    pass
+
+        # 2. Top-left Corner Badge compositing
+        if (logo_bytes or logo_dark_bytes) and corner_cfg.get("enabled", True):
+            margin_x = max(16, round(tw * (corner_cfg.get("margin_x_pct", 3.5) / 100.0)))
+            margin_y = max(16, round(th * (corner_cfg.get("margin_y_pct", 3.5) / 100.0)))
+            sample_w = max(40, int(tw * 0.25))
+            sample_h = max(20, int(th * 0.10))
+            corner_crop = canvas.crop((margin_x, margin_y, min(tw, margin_x + sample_w), min(th, margin_y + sample_h))).convert("L")
+            pixels = _img_pixels(corner_crop)
+            c_avg_lum = sum(pixels) / len(pixels) if pixels else 255.0
+
+            badge_bytes = logo_dark_bytes if (c_avg_lum > 140 and logo_dark_bytes) else (logo_bytes or logo_dark_bytes)
+            if badge_bytes:
+                try:
+                    with Image.open(BytesIO(badge_bytes)) as badge_logo:
+                        badge = badge_logo.convert("RGBA")
+                    max_w = max(80, int(tw * (corner_cfg.get("max_width_pct", 28.0) / 100.0)))
+                    max_h = max(45, int(th * (corner_cfg.get("max_height_pct", 12.0) / 100.0)))
+                    b_scale = min(max_w / max(1, badge.width), max_h / max(1, badge.height), 1.0)
+                    scaled_badge = badge.resize((max(1, round(badge.width * b_scale)), max(1, round(badge.height * b_scale))), Image.Resampling.LANCZOS)
+
+                    badge_overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+                    badge_overlay.paste(scaled_badge, (margin_x, margin_y), scaled_badge)
+                    canvas = Image.alpha_composite(canvas, badge_overlay)
+                except Exception:
+                    pass
+
+        return canvas
 
 
 @dataclass

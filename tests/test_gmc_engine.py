@@ -85,6 +85,20 @@ class TestGMCImageEngine(unittest.TestCase):
         with Image.open(io.BytesIO(meta_bytes)) as img:
             self.assertEqual(img.info.get("DigitalSourceType"), "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic")
 
+    def test_brand_compositor(self):
+        compositor = gmc_engine.BrandCompositor()
+        base_img = Image.new("RGBA", (512, 512), (255, 255, 255, 255))
+        logo_img = Image.new("RGBA", (80, 25), (10, 10, 10, 255))
+        l_buf = io.BytesIO()
+        logo_img.save(l_buf, format="PNG")
+        logo_bytes = l_buf.getvalue()
+
+        result = compositor.composite(base_img, role="hero", logo_bytes=logo_bytes)
+        self.assertEqual(result.size, (512, 512))
+        negs = compositor.get_negative_prompts()
+        self.assertIn("watermark", negs)
+        self.assertIn("logo", negs)
+
 
 if __name__ == "__main__":
     unittest.main()

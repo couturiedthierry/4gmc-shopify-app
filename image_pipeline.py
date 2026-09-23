@@ -101,6 +101,69 @@ def _role_prompt(role: str, *, product_title: str, source_title: str, store_name
     return shared + role_text
 
 
+class BaseGenerator:
+    """Handles API requests to the text-to-image AI model, strictly enforcing unbranded negative prompts."""
+
+    def __init__(self, gemini_key: str | list[str]):
+        self.keys = [gemini_key] if isinstance(gemini_key, str) else list(gemini_key)
+        self.keys = [k.strip() for k in self.keys if isinstance(k, str) and k.strip()]
+        if not self.keys:
+            raise ImagePipelineError("Gemini image generation is not configured.")
+
+    def build_unbranded_prompt(
+        self,
+        role: str,
+        *,
+        product_title: str,
+        source_title: str,
+        store_name: str,
+        primary_color: str,
+        accent_color: str,
+        brand_style: str,
+        target_audience: str,
+        product_facts: str,
+        negative_prompts: list[str] | None = None,
+    ) -> str:
+        prompt = _role_prompt(
+            role,
+            product_title=product_title,
+            source_title=source_title,
+            store_name=store_name,
+            primary_color=primary_color,
+            accent_color=accent_color,
+            brand_style=brand_style,
+            target_audience=target_audience,
+            product_facts=product_facts,
+        )
+        negatives = negative_prompts or ["text", "watermark", "logo", "branding", "words", "letters", "typography", "supplier logo"]
+        prompt += f"\nNEGATIVE PROMPTS (DO NOT RENDER): {', '.join(negatives)}. Generate a clean, unbranded base product.\n"
+        return prompt
+
+    async def generate_base_png(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        prompt: str,
+        source_mime: str,
+        source_bytes: bytes,
+        logo_mime: str = "",
+        logo_bytes: bytes | None = None,
+        logo_dark_mime: str = "",
+        logo_dark_bytes: bytes | None = None,
+    ) -> str:
+        return await _generate_png(
+            client,
+            gemini_key=self.keys,
+            prompt=prompt,
+            source_mime=source_mime,
+            source_bytes=source_bytes,
+            logo_mime=logo_mime,
+            logo_bytes=logo_bytes,
+            logo_dark_mime=logo_dark_mime,
+            logo_dark_bytes=logo_dark_bytes,
+        )
+
+
 async def _generate_png(client: httpx.AsyncClient, *, gemini_key: str | list[str], prompt: str,
                         source_mime: str, source_bytes: bytes,
                         logo_mime: str = "", logo_bytes: bytes | None = None,
@@ -277,16 +340,20 @@ async def generate_and_attach_images(
         )
         subject_rgba, subject_bbox = gmc_engine.segment_product(primary_source_bytes)
 
+        generator = BaseGenerator(gemini_key=gemini_key)
+        compositor = gmc_engine.BrandCompositor()
+        negatives = compositor.get_negative_prompts()
         role_mode_map = {"hero": "gmc_main", "detail": "gmc_additional", "lifestyle": "gmc_lifestyle"}
 
         for index, role in enumerate(roles):
             source_mime, source_bytes = references[min(index, len(references) - 1)]
             mode = role_mode_map.get(role, "gmc_main")
-            prompt = _role_prompt(
+            prompt = generator.build_unbranded_prompt(
                 role, product_title=product_title, source_title=source_title,
                 store_name=store_name, primary_color=primary_color,
                 accent_color=accent_color, brand_style=brand_style,
                 target_audience=target_audience, product_facts=product_facts,
+                negative_prompts=negatives,
             )
 
             final_raw = None
@@ -294,17 +361,21 @@ async def generate_and_attach_images(
 
             # Retry loop (up to 3 attempts)
             for attempt in range(1, 4):
-                encoded = await _generate_png(
-                    client, gemini_key=gemini_key, prompt=prompt,
+                encoded = await generator.generate_base_png(
+                    client, prompt=prompt,
                     source_mime=source_mime, source_bytes=source_bytes,
                     logo_mime=logo_mime, logo_bytes=logo_bytes,
                     logo_dark_mime=logo_dark_mime, logo_dark_bytes=logo_dark_bytes,
                 )
                 try:
-                    branded_encoded = _add_corner_logo(encoded, logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes)
-                    candidate_raw = base64.b64decode(branded_encoded, validate=True)
-                    with Image.open(BytesIO(candidate_raw)) as test_img:
-                        test_img.verify()
+                    raw_base = base64.b64decode(encoded, validate=True)
+                    with Image.open(BytesIO(raw_base)) as base_img:
+                        composited_img = compositor.composite(
+                            base_img, role=role, logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes
+                        )
+                        out = BytesIO()
+                        composited_img.convert("RGB").save(out, format="PNG")
+                        candidate_raw = out.getvalue()
                 except Exception:
                     # Mock unit test fallback for dummy test byte payloads
                     dummy = Image.new("RGBA", (512, 512), (255, 255, 255, 255))
