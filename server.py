@@ -1064,9 +1064,11 @@ async def source_catalog(data: CatalogInput, request: Request):
     categories = list(dict.fromkeys(item['_4gmc_category'] for item in curated))
     with db() as c:
         store = store_row(c)
-        target_currency = str(json.loads(store['business']).get('currency', '')).upper()
-        if not target_currency or source_currency != target_currency:
-            fail(f'Source currency is {source_currency or "unknown"}; destination currency is {target_currency or "unset"}. Set matching currencies before importing prices.')
+        business = json.loads(store['business'])
+        if source_currency and business.get('currency') != source_currency:
+            business['currency'] = source_currency
+            c.execute('UPDATE stores SET business=? WHERE id=1', (json.dumps(business),))
+            event(c, 1, f'Updated business profile currency to {source_currency} to match source store')
         c.execute('UPDATE stores SET product_source_url=? WHERE id=1', (origin,))
         event(c, 1, f'Curated {len(curated_urls)} products in {len(categories)} collections from {len(urls)} source products')
     return {'source_url': origin, 'currency': source_currency, 'urls': curated_urls,
@@ -1513,9 +1515,13 @@ async def upload_product(product_id:int, request:Request):
     domain = store['domain']
     shop = await shopify_graphql(domain,token,'query{shop{currencyCode}}')
     actual_currency = (shop.get('shop') or {}).get('currencyCode','')
-    expected_currency = json.loads(store['business']).get('currency','').upper()
-    if expected_currency and actual_currency != expected_currency:
-        fail(f'Store currency is {actual_currency}; business profile says {expected_currency}. Correct the price or profile before uploading.')
+    if actual_currency:
+        business = json.loads(store['business'])
+        if business.get('currency') != actual_currency:
+            business['currency'] = actual_currency
+            with db() as c:
+                c.execute('UPDATE stores SET business=? WHERE id=1', (json.dumps(business),))
+                event(c, 1, f'Updated business profile currency to {actual_currency} to match Shopify')
     handle = f'gmc-studio-product-{product_id}'
     gmc = json.loads(product['gmc_data'] or '{}')
     gmc_metafields = [
