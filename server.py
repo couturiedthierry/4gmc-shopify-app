@@ -1218,15 +1218,17 @@ def update_product(product_id: int, data: ProductUpdate, request: Request):
     return {'ok':True}
 
 async def ai_json(prompt, max_tokens=700):
-    keys = [k for k in (GEMINI_API_KEY2, GEMINI_API_KEY, SMARTAPI_KEY) if k]
-    if not keys:
-        fail('Configure an API key (GEMINI_API_KEY2 or GEMINI_API_KEY) in environment variables', 502)
+    gemini_key = (os.environ.get('GEMINI_API_KEY2', '') or os.environ.get('GEMINI_API_KEY', '') or GEMINI_API_KEY2 or GEMINI_API_KEY).strip()
+    smart_key = (os.environ.get('SMARTAPI_KEY', '') or SMARTAPI_KEY).strip()
 
-    last_error = None
-    for key in keys:
-        # 1. Try Google Gemini REST API endpoints
+    if not (gemini_key or smart_key):
+        fail('Configure the Gemini API key (GEMINI_API_KEY2 or GEMINI_API_KEY) in environment variables', 502)
+
+    gemini_errors = []
+    # 1. Primary: If a Gemini key is configured, execute via Google Gemini REST API
+    if gemini_key:
         models = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-pro']
-        headers = {'x-goog-api-key': key, 'Content-Type': 'application/json'}
+        headers = {'Content-Type': 'application/json'}
         payload = {
             'contents': [{'parts': [{'text': prompt}]}],
             'generationConfig': {
@@ -1236,7 +1238,7 @@ async def ai_json(prompt, max_tokens=700):
             }
         }
         for model in models:
-            url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}'
+            url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}'
             try:
                 async with httpx.AsyncClient(timeout=90, follow_redirects=False) as client:
                     response = await client.post(url, headers=headers, json=payload)
@@ -1244,7 +1246,7 @@ async def ai_json(prompt, max_tokens=700):
                     try:
                         data = response.json()
                     except ValueError:
-                        continue
+                        fail('AI service returned an invalid response', 502)
                     candidates = data.get('candidates', [])
                     if candidates and isinstance(candidates, list):
                         parts = candidates[0].get('content', {}).get('parts', [])
@@ -1255,11 +1257,23 @@ async def ai_json(prompt, max_tokens=700):
                                 return json.loads(match.group())
                             except ValueError:
                                 pass
-            except (httpx.TimeoutException, httpx.RequestError):
-                pass
+                else:
+                    try:
+                        err_detail = response.json().get('error', {}).get('message', response.text[:150])
+                    except Exception:
+                        err_detail = response.text[:150]
+                    gemini_errors.append(f'{model}: HTTP {response.status_code} ({err_detail})')
+            except httpx.TimeoutException:
+                fail('Gemini API took too long to respond. Page generation can be retried safely.', 504)
+            except httpx.RequestError as req_err:
+                gemini_errors.append(f'{model}: Connection failed ({str(req_err)})')
 
-        # 2. Try SmartAPI relay endpoint
-        smart_headers = {'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json'}
+        if gemini_errors and not smart_key:
+            fail(f'Google Gemini API error: {gemini_errors[0]}', 502)
+
+    # 2. Fallback: If SmartAPI key is set
+    if smart_key:
+        smart_headers = {'x-api-key': smart_key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json'}
         smart_payload = {'model': 'claude-fable-5', 'max_tokens': max_tokens, 'messages': [{'role': 'user', 'content': prompt}]}
         try:
             async with httpx.AsyncClient(timeout=90, follow_redirects=False) as client:
@@ -1282,13 +1296,16 @@ async def ai_json(prompt, max_tokens=700):
                         except ValueError:
                             pass
             else:
-                last_error = f'API returned HTTP {response.status_code}'
+                fail(f'AI page generation failed (API returned HTTP {response.status_code}). Please check your API key.', 502)
         except httpx.TimeoutException:
-            last_error = 'API response timed out'
+            fail('AI service took too long to respond. Page generation can be retried safely.', 504)
         except httpx.RequestError:
-            last_error = 'API endpoint unreachable'
+            fail('AI service endpoint unreachable. Check network connection and try again.', 502)
 
-    fail(f'AI page generation failed ({last_error or "Check API key"}). Please check your API key.', 502)
+    if gemini_errors:
+        fail(f'Google Gemini API error: {gemini_errors[0]}', 502)
+
+    fail('AI request failed. Please check your Gemini API key (starts with AIzaSy) or SmartAPI key.', 502)
 
 @app.post('/api/products/{product_id}/prepare')
 async def prepare_product(product_id:int,request:Request):
