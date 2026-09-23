@@ -160,6 +160,46 @@ def segment_product(source_bytes: bytes) -> tuple[Image.Image, tuple[int, int, i
     return subject, bbox
 
 
+def recolor_subject(subject_rgba: Image.Image, primary_hex: str, accent_hex: str = "") -> Image.Image:
+    """Recolor chromatic body panels of source product to target primary brand color while keeping functional parts (chrome, rubber, glass, black parts) natural."""
+    if not primary_hex or not primary_hex.startswith("#") or len(primary_hex) != 7:
+        return subject_rgba
+    try:
+        target_h, target_s, _ = Image.new("RGB", (1, 1), primary_hex).convert("HSV").getpixel((0, 0))
+    except Exception:
+        return subject_rgba
+
+    output = subject_rgba.copy()
+    rgb = output.convert("RGB")
+    alpha = output.split()[3]
+    hsv = rgb.convert("HSV")
+
+    h_chan, s_chan, v_chan = hsv.split()
+    s_pixels = list(s_chan.getdata())
+    v_pixels = list(v_chan.getdata())
+
+    mask_data = []
+    for s_val, v_val in zip(s_pixels, v_pixels):
+        if s_val > 35 and 25 < v_val < 248:
+            mask_data.append(255)
+        else:
+            mask_data.append(0)
+
+    recolor_mask = Image.new("L", subject_rgba.size)
+    recolor_mask.putdata(mask_data)
+    recolor_mask = recolor_mask.filter(ImageFilter.GaussianBlur(radius=1))
+
+    new_h_chan = Image.new("L", subject_rgba.size, target_h)
+    new_s_chan = Image.new("L", subject_rgba.size, max(target_s, 160))
+    recolored_hsv = Image.merge("HSV", (new_h_chan, new_s_chan, v_chan))
+    recolored_rgb = recolored_hsv.convert("RGB")
+    recolored_rgba = recolored_rgb.convert("RGBA")
+    recolored_rgba.putalpha(alpha)
+
+    result = Image.composite(recolored_rgba, output, recolor_mask)
+    return result
+
+
 def generate_background_scene(mode: str, target_size: tuple[int, int] = (1500, 1500),
                                primary_color: str = "#2251dc", accent_color: str = "#6f9cff") -> Image.Image:
     """Generate or render an environment background image depending on mode.
