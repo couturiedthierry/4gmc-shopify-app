@@ -37,7 +37,7 @@ SHOPIFY_CLIENT_SECRET = os.environ.get('SHOPIFY_CLIENT_SECRET', '')
 PUBLIC_URL = os.environ.get('PUBLIC_URL', 'http://localhost:8000').rstrip('/')
 TOKEN_KEY = os.environ.get('TOKEN_ENCRYPTION_KEY', '')
 FERNET = Fernet(TOKEN_KEY.encode()) if TOKEN_KEY else None
-SHOPIFY_SCOPES = 'read_products,write_products,read_inventory,write_inventory,read_locations,read_publications,write_publications,read_content,write_content,read_legal_policies,write_legal_policies,read_markets,write_markets,read_shipping,write_shipping'
+SHOPIFY_SCOPES = 'read_products,write_products,read_inventory,write_inventory,read_locations,read_publications,write_publications,read_content,write_content,read_legal_policies,write_legal_policies,read_markets,write_markets,read_shipping,write_shipping,read_locales,write_locales'
 SHOPIFY_REFRESH_LOCK = asyncio.Lock()
 USA_SETUP_LOCK = asyncio.Lock()
 SITE_KIT_LOCKS = {}
@@ -2845,8 +2845,13 @@ async def auto_apply_usa_market(store_id: int):
                         await shopify_graphql(domain,token,usa.PROFILE_UPDATE,{'id':profile['id'],'profile':profile['input']})
                     except Exception:
                         pass
+            try:
+                await shopify_graphql(domain,token,usa.SHOP_LOCALE_ENABLE,{'locale':'en'})
+                await shopify_graphql(domain,token,usa.SHOP_LOCALE_UPDATE,{'locale':'en','shopLocale':{'published':True}})
+            except Exception:
+                pass
             with db() as c:
-                event(c, store_id, 'Auto-configured USA-only market and Free Shipping on Shopify')
+                event(c, store_id, 'Auto-configured USA-only market, Free Shipping, and English locale on Shopify')
         except Exception as err:
             with db() as c:
                 event(c, store_id, f'USA market auto-setup status: {str(err)[:120]}')

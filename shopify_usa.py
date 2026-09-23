@@ -58,6 +58,16 @@ PROFILE_UPDATE = '''mutation UsaProfileUpdate($id: ID!, $profile: DeliveryProfil
     profile { id } userErrors { field message }
   }
 }'''
+SHOP_LOCALE_ENABLE = '''mutation UsaLocaleEnable($locale: String!) {
+  shopLocaleEnable(locale: $locale) {
+    shopLocale { locale published } userErrors { field message }
+  }
+}'''
+SHOP_LOCALE_UPDATE = '''mutation UsaLocaleUpdate($locale: String!, $shopLocale: ShopLocaleInput!) {
+  shopLocaleUpdate(locale: $locale, shopLocale: $shopLocale) {
+    shopLocale { locale published } userErrors { field message }
+  }
+}'''
 
 
 def nodes(connection):
