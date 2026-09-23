@@ -187,6 +187,7 @@ def brand_fingerprint(store_name: str, brand: dict) -> str:
         "name": store_name.strip(),
         "colors": [brand.get("color", ""), brand.get("accent", "")],
         "logo_digest": (brand.get("logo") or {}).get("digest", ""),
+        "logo_dark_digest": (brand.get("logo_dark") or {}).get("digest", ""),
         "roles": list(IMAGE_ROLES),
         "policy": "2.1-corner-logo-multiposition",
     }

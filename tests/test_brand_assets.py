@@ -40,6 +40,19 @@ with tempfile.TemporaryDirectory() as temp:
         assert response.content == raw
         assert response.headers['content-type'].startswith('image/png')
 
+        dark_encoded, dark_raw = image_b64(color=(10, 10, 10, 255))
+        dark_uploaded = client.put('/api/store/brand-asset', json={
+            'kind': 'logo_dark', 'filename': 'brand-logo-dark.png',
+            'content_type': 'image/png', 'data': dark_encoded,
+        })
+        assert dark_uploaded.status_code == 200, dark_uploaded.text
+        state = client.get('/api/state').json()
+        assert state['store']['brand']['logo_dark']['filename'] == 'brand-logo-dark.png'
+        assert state['store']['brand']['logo_dark']['digest']
+        dark_response = client.get('/api/store/brand-assets/logo_dark')
+        assert dark_response.status_code == 200
+        assert dark_response.content == dark_raw
+
         saved = client.put('/api/store', json={
             'name': state['store']['name'], 'domain': state['store']['domain'],
             'business': state['store']['business'],
@@ -48,6 +61,7 @@ with tempfile.TemporaryDirectory() as temp:
         assert saved.status_code == 200, saved.text
         state = client.get('/api/state').json()
         assert state['store']['brand']['logo']['digest']
+        assert state['store']['brand']['logo_dark']['digest']
         assert state['store']['brand']['color'] == '#112233'
 
         invalid = base64.b64encode(b'<html>not an image</html>').decode()
@@ -64,6 +78,7 @@ with tempfile.TemporaryDirectory() as temp:
         assert created.status_code == 200, created.text
         second_id = created.json()['id']
         assert client.get('/api/store/brand-assets/logo').status_code == 404
+        assert client.get('/api/store/brand-assets/logo_dark').status_code == 404
 
         favicon_data, favicon_raw = image_b64(size=(16, 16), color=(130, 100, 230, 255))
         favicon = client.put('/api/store/brand-asset', json={
@@ -75,9 +90,11 @@ with tempfile.TemporaryDirectory() as temp:
 
         assert client.post('/api/stores/1/select').status_code == 200
         assert client.get('/api/store/brand-assets/logo').content == raw
+        assert client.get('/api/store/brand-assets/logo_dark').content == dark_raw
         assert client.get('/api/store/brand-assets/favicon').status_code == 404
         assert client.post('/api/stores/' + str(second_id) + '/select').status_code == 200
         assert client.get('/api/store/brand-assets/logo').status_code == 404
+        assert client.get('/api/store/brand-assets/logo_dark').status_code == 404
         assert client.get('/api/store/brand-assets/favicon').content == favicon_raw
         print('Per-store logo and favicon upload checks passed')
     finally:

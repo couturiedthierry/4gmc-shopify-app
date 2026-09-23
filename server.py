@@ -387,7 +387,7 @@ class StoreConnectionInput(BaseModel):
 
 
 class BrandAssetInput(BaseModel):
-    kind: str = Field(pattern=r'^(logo|favicon)$')
+    kind: str = Field(pattern=r'^(logo|logo_dark|favicon)$')
     filename: str = Field(min_length=1, max_length=180)
     content_type: str = Field(min_length=1, max_length=80)
     data: str = Field(min_length=4, max_length=3_000_000)
@@ -861,7 +861,7 @@ async def update_store(data: StoreUpdate, request: Request):
         previous_brand = json.loads(previous['brand'])
         brand = {'color': str(data.brand.get('color', '')).strip().lower(),
                  'accent': str(data.brand.get('accent', '')).strip().lower()}
-        for asset_kind in ('logo', 'favicon'):
+        for asset_kind in ('logo', 'logo_dark', 'favicon'):
             if isinstance(previous_brand.get(asset_kind), dict):
                 brand[asset_kind] = previous_brand[asset_kind]
         if not all(re.fullmatch(r'#[0-9a-f]{6}', brand[key]) for key in ('color', 'accent')):
@@ -902,7 +902,7 @@ def decode_brand_asset(data: BrandAssetInput):
         raw = base64.b64decode(data.data, validate=True)
     except (binascii.Error, ValueError):
         fail('The uploaded image could not be read')
-    limit = 2 * 1024 * 1024 if data.kind == 'logo' else 512 * 1024
+    limit = 2 * 1024 * 1024 if data.kind in ('logo', 'logo_dark') else 512 * 1024
     if not raw or len(raw) > limit:
         fail(f'{data.kind.title()} must be smaller than {limit // 1024} KB')
     if raw.startswith(b'\x89PNG\r\n\x1a\n'):
@@ -915,7 +915,7 @@ def decode_brand_asset(data: BrandAssetInput):
         detected = ('ico', 'image/x-icon')
     else:
         fail('Use a PNG, JPG, WebP, or ICO image')
-    if data.kind == 'logo' and detected[0] == 'ico':
+    if data.kind in ('logo', 'logo_dark') and detected[0] == 'ico':
         fail('Use PNG, JPG, or WebP for the store logo')
     try:
         with Image.open(BytesIO(raw)) as image:
@@ -966,7 +966,7 @@ def upload_brand_asset(data: BrandAssetInput, request: Request):
 @app.get('/api/store/brand-assets/{kind}')
 def get_brand_asset(kind: str, request: Request):
     require(request)
-    if kind not in ('logo', 'favicon'):
+    if kind not in ('logo', 'logo_dark', 'favicon'):
         fail('Brand asset not found', 404)
     with db() as c:
         metadata = json.loads(store_row(c)['brand']).get(kind)
@@ -1146,14 +1146,24 @@ async def attach_generated_product_image(product_id: int, request: Request):
     token = await token_for(store)
     logo_bytes = None
     logo_mime = ''
+    logo_dark_bytes = None
+    logo_dark_mime = ''
     logo = brand.get('logo') if isinstance(brand.get('logo'), dict) else None
-    if not logo:
+    logo_dark = brand.get('logo_dark') if isinstance(brand.get('logo_dark'), dict) else None
+    if not logo and not logo_dark:
         fail('Upload the destination store logo before generating product images')
-    logo_path = brand_asset_directory() / f"logo.{logo.get('extension', '')}"
-    if not logo_path.is_file():
+    if logo:
+        logo_path = brand_asset_directory() / f"logo.{logo.get('extension', '')}"
+        if logo_path.is_file():
+            logo_bytes = logo_path.read_bytes()
+            logo_mime = logo.get('content_type', '')
+    if logo_dark:
+        logo_dark_path = brand_asset_directory() / f"logo_dark.{logo_dark.get('extension', '')}"
+        if logo_dark_path.is_file():
+            logo_dark_bytes = logo_dark_path.read_bytes()
+            logo_dark_mime = logo_dark.get('content_type', '')
+    if not logo_bytes and not logo_dark_bytes:
         fail('The uploaded destination store logo file is missing. Upload it again.')
-    logo_bytes = logo_path.read_bytes()
-    logo_mime = logo.get('content_type', '')
     business = json.loads(store['business'])
     try:
         gemini_keys = [k.strip() for k in (os.environ.get('GEMINI_API_KEY2', ''), os.environ.get('GEMINI_API_KEY', ''), GEMINI_API_KEY2, GEMINI_API_KEY) if k and k.strip()]
@@ -1165,7 +1175,8 @@ async def attach_generated_product_image(product_id: int, request: Request):
             primary_color=brand['color'], accent_color=brand['accent'],
             brand_style=str(business.get('brand_style', 'credible premium ecommerce photography')),
             target_audience=str(business.get('target_audience', 'United States shoppers')),
-            product_facts=product['source_data'], logo_mime=logo_mime, logo_bytes=logo_bytes)
+            product_facts=product['source_data'], logo_mime=logo_mime, logo_bytes=logo_bytes,
+            logo_dark_mime=logo_dark_mime, logo_dark_bytes=logo_dark_bytes)
     except image_pipeline.ImagePipelineError as error:
         fail(str(error), 502)
     if (len(results) != 3 or {item.get('role') for item in results} != set(catalog_rules.IMAGE_ROLES) or

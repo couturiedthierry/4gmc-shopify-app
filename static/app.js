@@ -179,15 +179,16 @@ function design(){
  const store=data.store, brand=store.brand;
  const color=/^#[0-9a-fA-F]{6}$/.test(brand.color||'')?brand.color:'#2251dc';
  const accent=/^#[0-9a-fA-F]{6}$/.test(brand.accent||'')?brand.accent:'#6f9cff';
- const logoUrl=brandAssetUrl('logo',brand.logo),faviconUrl=brandAssetUrl('favicon',brand.favicon);
- const logoPreview=logoUrl?`<img class="brand-asset-image logo-image" src="${esc(logoUrl)}" alt="Current store logo">`:'<span class="asset-empty">No logo uploaded</span>';
+ const logoUrl=brandAssetUrl('logo',brand.logo),logoDarkUrl=brandAssetUrl('logo_dark',brand.logo_dark),faviconUrl=brandAssetUrl('favicon',brand.favicon);
+ const logoPreview=logoUrl?`<img class="brand-asset-image logo-image" src="${esc(logoUrl)}" alt="Current light logo">`:'<span class="asset-empty">No light logo uploaded</span>';
+ const logoDarkPreview=logoDarkUrl?`<img class="brand-asset-image logo-image" src="${esc(logoDarkUrl)}" alt="Current dark logo">`:'<span class="asset-empty">No dark logo uploaded</span>';
  const faviconPreview=faviconUrl?`<img class="brand-asset-image favicon-image" src="${esc(faviconUrl)}" alt="Current store favicon">`:'<span class="asset-empty">No favicon uploaded</span>';
  const ready=Boolean(data.storefront);
  const preview=ready?storefrontPreview(data.storefront):'<div class="preview-blank" aria-label="Storefront preview is blank until the full store is generated"></div>';
  return header('Store design','Choose the store colors and upload its logo and favicon, then generate the complete store before previewing it.')+
  `<div class="grid two-col"><section class="card"><h2>Storefront preview</h2><p class="sub">${ready?'Generated from your saved branding, published pages, Contact details, and products.':'The preview stays blank until the complete store has been generated.'}</p>${preview}</section><div class="grid">
  <section class="card"><h2>Brand colors</h2><p class="sub">These colors are used for the generated preview and Gemini product mockups.</p><form id="design-colors-form" class="form-grid"><label>Primary color<input id="design-primary" type="color" value="${esc(color)}" required></label><label>Accent color<input id="design-accent" type="color" value="${esc(accent)}" required></label><div class="full actions"><button class="primary">Save colors</button></div></form><p class="helper">Changing colors clears the old preview until you regenerate the store and its product images.</p></section>
- <section class="card"><h2>Logo & favicon</h2><p class="sub">Upload the branding for this selected store. Replacing either file clears the preview until you regenerate it.</p><form id="brand-assets-form" class="form-grid brand-assets-form"><label class="full asset-upload-row"><span class="asset-preview" data-brand-preview="logo">${logoPreview}</span><span class="asset-upload-copy"><strong>Store logo</strong><small>PNG, JPG, or WebP · maximum 2 MB</small><input id="design-logo" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></span></label><label class="full asset-upload-row"><span class="asset-preview favicon-preview" data-brand-preview="favicon">${faviconPreview}</span><span class="asset-upload-copy"><strong>Favicon</strong><small>PNG, JPG, WebP, or ICO · maximum 512 KB</small><input id="design-favicon" type="file" accept=".png,.jpg,.jpeg,.webp,.ico,image/png,image/jpeg,image/webp,image/x-icon"></span></label><div class="full actions"><button class="primary">Upload branding</button></div></form></section>
+ <section class="card"><h2>Logo & favicon</h2><p class="sub">Upload the branding for this selected store. Replacing any file clears the preview until you regenerate it.</p><form id="brand-assets-form" class="form-grid brand-assets-form"><label class="full asset-upload-row"><span class="asset-preview" data-brand-preview="logo">${logoPreview}</span><span class="asset-upload-copy"><strong>Store logo (Light version)</strong><small>PNG, JPG, or WebP · maximum 2 MB</small><input id="design-logo" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></span></label><label class="full asset-upload-row"><span class="asset-preview" data-brand-preview="logo_dark">${logoDarkPreview}</span><span class="asset-upload-copy"><strong>Store logo (Dark version)</strong><small>PNG, JPG, or WebP · maximum 2 MB</small><input id="design-logo-dark" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></span></label><label class="full asset-upload-row"><span class="asset-preview favicon-preview" data-brand-preview="favicon">${faviconPreview}</span><span class="asset-upload-copy"><strong>Favicon</strong><small>PNG, JPG, WebP, or ICO · maximum 512 KB</small><input id="design-favicon" type="file" accept=".png,.jpg,.jpeg,.webp,.ico,image/png,image/jpeg,image/webp,image/x-icon"></span></label><div class="full actions"><button class="primary">Upload branding</button></div></form></section>
  <section class="card"><h2>Generate complete store</h2><p class="sub">Use your saved business details to create and publish the source pages, Contact page, policies, products, and images. The preview appears only after all steps finish.</p><form id="storefront-build-form" class="form-grid"><label class="full">Reference store for page structure and policy rules<input id="build-page-source" type="url" value="${esc(store.policy_source_url||'')}" placeholder="https://pages-source-store.com" required></label><label class="full">Website to copy products from<input id="build-product-source" type="url" value="${esc(store.product_source_url||'')}" placeholder="https://products-source-store.com" required></label><div class="full actions"><button class="primary" ${store.connected&&!busy?'':'disabled'}>Generate full store</button></div></form><p id="storefront-progress" class="helper">${store.connected?'Ready to generate from the two source websites.':'Connect Shopify before generating and publishing the full store.'}</p><div class="section-line"></div><p class="helper">Shopify theme-file publishing requires separate theme access from Shopify. This screen previews the generated content and branding; it does not change the live theme.</p></section></div></div>`;
 }
 
@@ -264,24 +265,25 @@ document.body.addEventListener('click',e=>{
  }
 });
 document.body.addEventListener('change',e=>{
- const input=e.target.closest('#design-logo,#design-favicon');
+ const input=e.target.closest('#design-logo,#design-logo-dark,#design-favicon');
  if(!input||!input.files?.[0])return;
- const kind=input.id==='design-logo'?'logo':'favicon';
+ const kind=input.id==='design-logo'?'logo':input.id==='design-logo-dark'?'logo_dark':'favicon';
  const target=document.querySelector(`[data-brand-preview="${kind}"]`);
  if(!target)return;
  const url=URL.createObjectURL(input.files[0]);
- target.innerHTML=`<img class="brand-asset-image ${kind==='logo'?'logo-image':'favicon-image'}" src="${esc(url)}" alt="Selected ${kind} preview">`;
+ target.innerHTML=`<img class="brand-asset-image ${kind==='favicon'?'favicon-image':'logo-image'}" src="${esc(url)}" alt="Selected ${kind} preview">`;
  setTimeout(()=>URL.revokeObjectURL(url),10000);
 });
 document.body.addEventListener('submit',e=>{
  const form=e.target;if(form.id==='login-form')return;if(!form.id&&!form.classList.contains('store-connection-form'))return;e.preventDefault();
  if(form.id==='design-colors-form')perform(async()=>{await api('/api/store','PUT',{name:data.store.name,domain:data.store.domain,business:data.store.business,brand:{color:val('design-primary'),accent:val('design-accent')}});return 'Brand colors saved.';});
  if(form.id==='brand-assets-form')perform(async()=>{
-  const logo=$('design-logo').files[0],favicon=$('design-favicon').files[0];
-  if(!logo&&!favicon)throw new Error('Choose a logo or favicon to upload.');
-  if(logo){if(logo.size>2*1024*1024)throw new Error('Logo must be smaller than 2 MB.');await api('/api/store/brand-asset','PUT',{kind:'logo',...await readBrandFile(logo)});}
+  const logo=$('design-logo').files[0],logoDark=$('design-logo-dark').files[0],favicon=$('design-favicon').files[0];
+  if(!logo&&!logoDark&&!favicon)throw new Error('Choose a logo or favicon to upload.');
+  if(logo){if(logo.size>2*1024*1024)throw new Error('Light logo must be smaller than 2 MB.');await api('/api/store/brand-asset','PUT',{kind:'logo',...await readBrandFile(logo)});}
+  if(logoDark){if(logoDark.size>2*1024*1024)throw new Error('Dark logo must be smaller than 2 MB.');await api('/api/store/brand-asset','PUT',{kind:'logo_dark',...await readBrandFile(logoDark)});}
   if(favicon){if(favicon.size>512*1024)throw new Error('Favicon must be smaller than 512 KB.');await api('/api/store/brand-asset','PUT',{kind:'favicon',...await readBrandFile(favicon)});}
-  return logo&&favicon?'Logo and favicon uploaded. Regenerate the store preview.':`${logo?'Logo':'Favicon'} uploaded. Regenerate the store preview.`;
+  return 'Branding uploaded. Regenerate the store preview.';
  });
  if(form.id==='storefront-build-form')perform(async()=>{
   const pageSource=val('build-page-source'),productSource=val('build-product-source');
