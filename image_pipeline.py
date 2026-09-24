@@ -545,9 +545,14 @@ async def generate_and_attach_images(
             role = roles[index] if index < len(roles) else f"view_{index + 1}"
             mode = role_mode_map.get(role, "gmc_main")
 
-            # Dynamic prompt reading store's brand name and target color without hardcoding
+            # Create explicit photo edit plan identifying surfaces, target color, logo locations
+            edit_plan = gmc_engine.create_photo_edit_plan(
+                ref_bytes, profile=profile, brand_name=store_name, target_color=primary_color, accent_color=accent_color
+            )
+
+            # Build fresh prompt filling exact edit plan placeholders
             shot_prompt = gmc_engine.build_shot_prompt(
-                profile, role=role, brand_name=store_name, primary_color=primary_color
+                profile, role=role, brand_name=store_name, primary_color=primary_color, edit_plan=edit_plan
             )
 
             ref_desc = [
@@ -587,17 +592,11 @@ async def generate_and_attach_images(
                     logo_dark_mime=logo_dark_mime,
                     logo_dark_bytes=logo_dark_bytes,
                 )
-                if logo_bytes or logo_dark_bytes:
-                    encoded_output = _add_corner_logo(encoded_output, logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes)
+                # _add_corner_logo() IS DISABLED — no floating corner overlays appended
                 candidate_raw = base64.b64decode(encoded_output, validate=True)
-            except Exception:
-                # Fallback to local rendering for offline test harness
-                bg = gmc_engine.generate_background_scene(mode)
-                subject_rgba, _ = gmc_engine.segment_product(ref_bytes)
-                comp = gmc_engine.composite_product_on_scene(subject_rgba, bg, mode=mode, logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes)
-                out = BytesIO()
-                comp.save(out, format="PNG")
-                candidate_raw = out.getvalue()
+            except Exception as err:
+                # Do NOT silently substitute local compositing if Gemini fails
+                raise ImagePipelineError(f"Gemini API image editing failed for source photo {index + 1}: {err}") from err
 
             validation = ProductConsistencyValidator.validate(ref_bytes, candidate_raw, product_identity, mode=mode)
             review_eval = ProductConsistencyValidator.evaluate_human_review(ref_bytes, candidate_raw, profile, role=role)

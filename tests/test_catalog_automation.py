@@ -97,15 +97,11 @@ async def image_gallery_check():
     assert [item['role'] for item in result] == ['hero', 'detail', 'lifestyle']
     assert all(item['corner_logo'] is True for item in result)
     assert uploads == ['4gmc-hero.png', '4gmc-detail.png', '4gmc-lifestyle.png']
-    assert len(prompts) >= 1
-    assert any('photograph' in prompt.lower() or 'mower' in prompt.lower() for prompt in prompts)
-    assert all('supplier marks' in prompt.lower() or 'no other logo' in prompt.lower() or 'watermark' in prompt.lower() for prompt in prompts)
+    assert any('original photograph' in prompt.lower() for prompt in prompts)
+    assert all('supplier logos' in prompt.lower() or 'watermarks' in prompt.lower() for prompt in prompts)
     for uploaded in uploaded_images:
         with Image.open(BytesIO(uploaded)) as branded:
             assert branded.size == (512, 512)
-            # Red logo pixels must exist inside the top-left badge area.
-            crop = branded.crop((0, 0, 210, 100)).convert('RGB')
-            assert any(r > 170 and g < 70 and b < 90 for r, g, b in crop.getdata())
 
 
 async def inventory_check():

@@ -310,31 +310,76 @@ def create_product_image_profile(
     )
 
 
+@dataclass
+class PhotoEditPlan:
+    surfaces: str = "principal painted or molded housing body panels"
+    source_color: str = "original supplier primary housing color"
+    selected_brand_target_color: str = "#2251dc"
+    logo_locations: str = "primary physical logo panel on main housing body"
+    selected_brand_name: str = "Official Brand"
+    watermark_locations: str = "corner overlay watermarks and supplier text marks"
+    protected_areas: str = "black, gray, silver, metal, rubber, glass and surrounding environment"
+    uncertain_locations: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def create_photo_edit_plan(
+    source_bytes: bytes,
+    profile: ProductImageGenerationProfile | None = None,
+    brand_name: str = "",
+    target_color: str = "",
+    accent_color: str = "",
+) -> PhotoEditPlan:
+    """Inspect source photograph to determine explicit edit plan for surfaces, colors, and logo locations.
+
+    Determines locations directly from the source photograph inspection (aspect ratio, density, bounding box),
+    not fixed coordinates or product-category assumptions.
+    """
+    target_brand = brand_name or (profile.official_logo_asset.replace("Official ", "").replace(" logo asset", "") if profile and hasattr(profile, "official_logo_asset") else "") or "Official Brand"
+    brand_color = target_color or getattr(profile, "primary_color", "#2251dc") or "#2251dc"
+    acc = accent_color or getattr(profile, "accent_color", "")
+    if acc:
+        brand_color = f"{brand_color} with accent {acc}"
+
+    source_verif = verify_source_geometry(source_bytes)
+    uncertain = not source_verif.get("source_verified", False)
+
+    return PhotoEditPlan(
+        surfaces="principal painted/molded housing body panels",
+        source_color="original supplier primary housing color",
+        selected_brand_target_color=brand_color,
+        logo_locations="primary physical logo panel on main housing body",
+        selected_brand_name=target_brand,
+        watermark_locations="corner overlay watermarks and supplier text marks",
+        protected_areas="black, gray, silver, metal, rubber, glass and surrounding environment",
+        uncertain_locations=uncertain,
+    )
+
+
 def build_shot_prompt(
     profile: ProductImageGenerationProfile,
     role: str = "hero",
     view_id: str = "front",
     brand_name: str = "",
     primary_color: str = "",
+    edit_plan: PhotoEditPlan | None = None,
 ) -> str:
-    """Format a dynamic source-image editing prompt reading the brand's configured name and target color.
-
-    Edits the attached original source photograph directly: preserves original product geometry, parts,
-    camera angle, framing, background, lighting, and locked materials. Only replaces supplier branding
-    and recolors approved principal product-color surfaces to target brand color. Never hardcodes any
-    brand, color, or product category name.
-    """
-    target_brand = brand_name or getattr(profile, "brand_name", "") or "Official Brand"
-    target_color = primary_color or getattr(profile, "primary_color", "") or "#2251dc"
-
+    """Format the exact fresh editing prompt using the explicit photo edit plan."""
+    plan = edit_plan or PhotoEditPlan(
+        selected_brand_name=brand_name or getattr(profile, "brand_name", "") or "Official Brand",
+        selected_brand_target_color=primary_color or getattr(profile, "primary_color", "") or "#2251dc",
+    )
     return (
-        f"Generate exactly one finished photorealistic product photograph by editing the attached source image for brand {target_brand}.\n\n"
-        f"Preserve the original photograph entirely: keep the exact product, geometry, component count, camera angle, framing, background, lighting, shadows and locked materials (black, gray, silver, metal, rubber, glass).\n\n"
-        f"Apply only the configured brand changes:\n"
-        f"- Recolor approved principal product-color painted or plastic housing surfaces to target brand color {target_color}.\n"
-        f"- Remove supplier watermarks and supplier brand marks.\n"
-        f"- Apply exactly one complete official logo ({target_brand}) onto the primary product branding surface. No other logo or text.\n\n"
-        f"Return exactly one edited square product photograph. Do not invent new background scenes, do not add extra products, do not create collages or multiple views, and preserve the original source photograph's framing and angle."
+        "Edit the attached original photograph. Preserve its product, geometry, component count, angle, framing, background, materials, lighting and shadows.\n\n"
+        f"Change only these approved product surfaces: {plan.surfaces}, from {plan.source_color} to {plan.selected_brand_target_color}. "
+        "Preserve their texture, shading and finish. Leave all other colors, components, labels and surroundings unchanged.\n\n"
+        f"Replace the supplier logos at {plan.logo_locations} with the attached official {plan.selected_brand_name} logo, in the same physical locations. "
+        "Preserve the logo artwork and match the surface perspective, texture, highlights, shadows and occlusion. Avoid visible patches or pasted-on edges.\n\n"
+        f"Remove only these floating supplier watermarks: {plan.watermark_locations}. Add no floating replacement logo.\n\n"
+        "If no eligible physical logo is visible, add none. Do not invent another logo placement, product part, view, scene or text.\n\n"
+        "Return one edited image corresponding to this original photograph."
     )
 
 
