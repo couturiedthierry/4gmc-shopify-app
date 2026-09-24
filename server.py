@@ -399,6 +399,7 @@ class ImportInput(BaseModel):
     url: str
 class CatalogInput(BaseModel):
     source_url: str = Field(min_length=8, max_length=300)
+    max_products: int = Field(default=20, ge=1, le=50)
 class ProductUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=150)
     description: str = ''
@@ -1076,7 +1077,7 @@ async def source_catalog(data: CatalogInput, request: Request):
         for start in range(0, min(len(urls), 200), 12):
             batch = await asyncio.gather(*(read_candidate(client, url) for url in urls[start:start + 12]))
             candidates.extend(item for item in batch if item)
-    curated = catalog_rules.curate_catalog(candidates)
+    curated = catalog_rules.curate_catalog(candidates, max_products=data.max_products)
     curated_urls = [item['_4gmc_url'] for item in curated]
     if not curated_urls:
         fail('No physical products with usable public data were found')

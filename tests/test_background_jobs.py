@@ -101,6 +101,7 @@ async def exercise():
 
                 async def curated(data, request):
                     assert request is None and server.BACKGROUND_JOB.get() is True
+                    assert getattr(data, 'max_products', 20) == 20
                     return {'source_url': data.source_url, 'currency': 'USD',
                             'urls': [data.source_url + '/products/one', data.source_url + '/products/two'],
                             'categories': ['Tools'], 'discovered': 12, 'scanned': 12, 'omitted': 10}
