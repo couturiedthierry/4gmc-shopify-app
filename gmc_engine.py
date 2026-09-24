@@ -253,17 +253,104 @@ class BrandedCanonicalProduct:
 
 
 @dataclass
+class ProductImageGenerationProfile:
+    product_id: str = ""
+    original_source_images: list[dict] = field(default_factory=list)
+    available_views: list[str] = field(default_factory=lambda: ["front", "detail", "rear", "side", "top"])
+    visible_components: dict[str, str] = field(default_factory=dict)
+    locked_components_and_materials: str = "Preserve black, gray, silver, metal, rubber, transparent and glass areas. Preserve all original shading, surface texture, and material appearance."
+    approved_recolor_zones: str = "Change only approved brand-colored surfaces (convert supplier plastic housing panels to official brand color)."
+    official_logo_asset: str = "Official VYROX logo transparent PNG reference asset."
+    approved_logo_surfaces: str = "Replace supplier logos with the official VYROX logo on approved housing surface."
+    forbidden_additions: str = "Do not duplicate the product. Every image must contain exactly one product. Explicitly forbid duplicate products, duplicate wheels, duplicate handles, duplicate engines, duplicate batteries, duplicate hoses, duplicate blades, duplicate accessories and detached parts."
+    forbidden_text: str = "Remove old supplier watermarks and product marks. Do not create additional logos, badges, labels, specifications or text."
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def create_product_image_profile(
+    product_id: str,
+    source_images: list[str],
+    product_title: str,
+    source_title: str,
+    product_facts: str = "",
+    primary_color: str = "#2251dc",
+    accent_color: str = "#6f9cff",
+    brand_name: str = "VYROX",
+) -> ProductImageGenerationProfile:
+    source_records = []
+    for idx, url in enumerate(source_images):
+        checksum = hashlib.sha256(str(url).encode()).hexdigest()
+        view_id = "front" if idx == 0 else ("detail" if idx == 1 else "side")
+        source_records.append({"url": url, "checksum": checksum, "view_id": view_id})
+
+    visible_comp = {
+        "hero": f"Main {source_title or product_title} housing body, primary control panel, support base, power connection, primary handles",
+        "detail": f"Close-up detail view of {source_title or product_title} control interface, material texture, housing seam and support frame",
+        "rear": f"Rear panel view of {source_title or product_title}, exhaust/intake ventilation, rear wheels, power connection and frame mount",
+        "lifestyle": f"Complete single {product_title} unit positioned cleanly in authentic commercial environment space",
+    }
+
+    return ProductImageGenerationProfile(
+        product_id=product_id,
+        original_source_images=source_records,
+        available_views=["front", "detail", "rear", "side", "top"],
+        visible_components=visible_comp,
+        locked_components_and_materials="Preserve black, gray, silver, metal, rubber, transparent and glass areas. Preserve all original shading, surface texture, and material appearance.",
+        approved_recolor_zones=f"Change only approved brand-colored surfaces (convert supplier plastic body shell to {brand_name} brand color {primary_color}" + (f" with accent color {accent_color}" if accent_color else "") + ").",
+        official_logo_asset=f"Official {brand_name} logo asset",
+        approved_logo_surfaces=f"Replace supplier logos with the official {brand_name} logo on the main approved housing surface.",
+        forbidden_additions="Do not duplicate the product. Every image must contain exactly one product. Explicitly forbid duplicate products, duplicate wheels, duplicate handles, duplicate engines, duplicate batteries, duplicate hoses, duplicate blades, duplicate accessories and detached parts.",
+        forbidden_text="Remove old supplier watermarks and product marks. Do not create additional logos, badges, labels, specifications or text.",
+    )
+
+
+def build_shot_prompt(
+    profile: ProductImageGenerationProfile,
+    role: str = "hero",
+    view_id: str = "front",
+    brand_name: str = "VYROX",
+) -> str:
+    """Format the exact shot prompt following the mandatory 4GMC structure."""
+    visible = profile.visible_components.get(role, profile.visible_components.get(view_id, "Main product housing body, controls, power connection, and frame"))
+
+    shot_specific = {
+        "hero": "Full original product source centered on a clean light neutral studio background (#F8F9FA) with soft, natural contact shadow.",
+        "detail": "Original source crop showing the requested detail region in high resolution, preserving exact material texture and component seams.",
+        "rear": "Verified original rear source view of the single product centered on a clean light neutral studio background.",
+        "lifestyle": "Full original source product positioned in a photorealistic environment (modern home, garden, or driveway). Gemini may generate the environment, floor, room, garden, driveway, lighting and shadows. It must preserve the complete product and must not invent loose hoses, accessories, tools, people or additional products.",
+    }.get(role, "Full original product source centered on clean neutral background.")
+
+    return (
+        "Generate one finished photorealistic commercial photograph of the exact product in the reference image. "
+        "Preserve the source-supported geometry, component count, proportions, connections, materials and camera-visible side.\n\n"
+        f"Visible components:\n{visible}\n\n"
+        f"Locked components and materials:\n{profile.locked_components_and_materials}\n\n"
+        f"Approved changes:\n{profile.approved_recolor_zones}\n{profile.approved_logo_surfaces}\n\n"
+        f"Remove:\nRemove old supplier watermarks and product marks.\n\n"
+        f"Forbidden:\n{profile.forbidden_additions}\n{profile.forbidden_text}\n\n"
+        f"Shot:\n{shot_specific}\n\n"
+        "Return one complete finished image. Do not create a collage, duplicate product, new product design or unrelated accessory."
+    )
+
+
+@dataclass
 class GenerationAuditLog:
     product_id: str = ""
     canonical_asset_id: str = ""
     generation_mode: str = "hero"
     image_model_calls: list[str] = field(default_factory=list)
-    scene_model_called: bool = False
-    product_model_called: bool = False
+    scene_model_called: bool = True
+    product_model_called: bool = True
     img2img_called: bool = False
     logo_composite_called: bool = False
-    product_pixels_source: str = ""
+    product_pixels_source: str = "supplier_source_reference"
     regenerated_product_pixels: bool = False
+    full_prompt: str = ""
+    ordered_references: list[str] = field(default_factory=list)
+    model_name: str = "gemini-3.1-flash-image"
+    review_status: str = "STAGED_FOR_HUMAN_REVIEW"
     validation_result: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

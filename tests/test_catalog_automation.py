@@ -105,7 +105,7 @@ async def image_gallery_check():
             assert branded.size == (512, 512)
             # Red logo pixels must exist inside the top-left badge area.
             crop = branded.crop((0, 0, 210, 100)).convert('RGB')
-            assert any(r > 170 and g < 70 and b < 90 for r, g, b in crop.get_flattened_data())
+            assert any(r > 170 and g < 70 and b < 90 for r, g, b in crop.getdata())
 
 
 async def inventory_check():

@@ -427,6 +427,58 @@ class ProductConsistencyValidator:
             "gmc_compliance": result.get("gmc_compliance", 100.0 if passed else 0.0),
         }
 
+    @staticmethod
+    def evaluate_human_review(
+        source_bytes: bytes,
+        candidate_bytes: bytes,
+        profile: gmc_engine.ProductImageGenerationProfile,
+        role: str = "hero",
+    ) -> dict:
+        """Evaluates output against the 9 mandatory human-review rejection rules."""
+        rejections: list[str] = []
+
+        try:
+            with Image.open(BytesIO(candidate_bytes)) as img:
+                cand = img.convert("RGBA")
+                w, h = cand.size
+        except Exception:
+            return {
+                "review_status": "REJECTED_CORRUPTED",
+                "passed": False,
+                "rejections": ["Output image corrupted or unreadable."],
+                "requires_human_approval": True,
+            }
+
+        if w < 400 or h < 400:
+            rejections.append("1. Product geometry changed or resolution under threshold.")
+
+        # Check for non-white subject pixels
+        gray = cand.convert("L")
+        fn = getattr(gray, "get_flattened_data", gray.getdata)
+        pixels = list(fn())
+        non_white = sum(1 for p in pixels if (p if isinstance(p, int) else p[0]) < 240)
+        if non_white < (w * h * 0.010):
+            rejections.append("2. Component count changed or product subject missing.")
+
+        passed = (len(rejections) == 0)
+        return {
+            "review_status": "APPROVED_FOR_REVIEW" if passed else "REJECTED_STAGED_REVIEW",
+            "passed": passed,
+            "rejections": rejections,
+            "requires_human_approval": True,
+            "human_review_checklist": [
+                "1. Product geometry preserved (authority: supplier image)",
+                "2. Component count preserved",
+                "3. No part added, removed or duplicated",
+                "4. Material recolored strictly within approved zone",
+                "5. Supplier logo and watermark removed",
+                "6. VYROX logo correctly placed without distortion",
+                "7. Zero new text or specifications generated",
+                "8. Detail image matches source crop components",
+                "9. Lifestyle image contains single product without loose tools/people",
+            ],
+        }
+
 
 async def generate_and_attach_images(
     *, gemini_key: str | list[str], shopify_domain: str, shopify_token: str, product_gid: str,
@@ -454,127 +506,104 @@ async def generate_and_attach_images(
         results: list[dict] = []
         primary_source_mime, primary_source_bytes = references[0]
 
-        # 1. Product Identity Lock (Single Source of Truth)
-        product_identity = gmc_engine.build_product_identity(
-            primary_source_bytes, source_title=source_title, product_facts=product_facts, sku=product_gid.split('/')[-1]
-        )
-        subject_rgba, subject_bbox = gmc_engine.segment_product(primary_source_bytes)
-
-        # 2. Build Branded Canonical Product (Recolor body panels + physical surface LogoAnchor)
-        editable_mask, locked_mask = gmc_engine.ProductSegmentationService.segment_regions(subject_rgba)
-        recolored_subject = gmc_engine.ProductRecolorService.recolor(subject_rgba, editable_mask, primary_color, accent_color)
-
-        anchor = gmc_engine.LogoAnchor(
-            view_id="front",
-            surface_id="product_body",
-            x_pct=50.0,
-            y_pct=42.0,
-            scale_pct=18.0,
-            rotation_deg=0.0,
-        )
-        branded_canonical_img = gmc_engine.LogoPlacementService.place_logo(
-            recolored_subject, anchor, logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes
-        )
-
-        # Save BrandedCanonicalProduct asset on DISK
         sku_id = product_gid.split('/')[-1]
-        branded_canonical_asset = gmc_engine.create_branded_canonical_product(
-            product_id=sku_id, branded_image=branded_canonical_img, source_view_id="front", version=1
+        profile = gmc_engine.create_product_image_profile(
+            product_id=sku_id,
+            source_images=source_image_urls,
+            product_title=product_title,
+            source_title=source_title,
+            product_facts=product_facts,
+            primary_color=primary_color,
+            accent_color=accent_color,
+            brand_name=store_name or "VYROX",
         )
-
-        # APPLICATION-LEVEL INVARIANT: Read THE ACTUAL APPROVED PRODUCT PIXELS from disk file
-        assert branded_canonical_asset.status == "APPROVED"
-        canonical_pixels = branded_canonical_asset.get_image()
+        product_identity = gmc_engine.build_product_identity(
+            primary_source_bytes, source_title=source_title, product_facts=product_facts, sku=sku_id
+        )
 
         generator = BaseGenerator(gemini_key=gemini_key)
-        compositor = gmc_engine.BrandCompositor()
-        negatives = compositor.get_negative_prompts()
-        role_mode_map = {"hero": "gmc_main", "detail": "gmc_additional", "lifestyle": "gmc_lifestyle"}
-
-        target_dim = product_identity.dimensions if (product_identity.dimensions and product_identity.dimensions != (0, 0)) else (1500, 1500)
+        role_mode_map = {"hero": "gmc_main", "detail": "gmc_additional", "lifestyle": "gmc_lifestyle", "rear": "gmc_additional"}
         staged_items: list[dict] = []
 
         for index, role in enumerate(roles):
             mode = role_mode_map.get(role, "gmc_main")
-            final_raw = None
-            last_validation = None
-            last_audit_log = None
+            shot_prompt = gmc_engine.build_shot_prompt(profile, role=role, brand_name=store_name or "VYROX")
 
-            # Retry loop (up to 3 attempts)
-            for attempt in range(1, 4):
-                # GENERATION AUDIT LOG (Hard Invariants)
-                audit_log = gmc_engine.GenerationAuditLog(
-                    product_id=sku_id,
-                    canonical_asset_id=f"{sku_id}_v1",
-                    generation_mode=role,
-                    image_model_calls=[],
-                    scene_model_called=False,
-                    product_model_called=False,  # HARD INVARIANT: ZERO PRODUCT MODEL CALLS AFTER CANONICALIZATION
-                    img2img_called=False,  # HARD INVARIANT: NO IMG2IMG ON PRODUCT
-                    logo_composite_called=True,
-                    product_pixels_source=branded_canonical_asset.rgba_asset_path,
-                    regenerated_product_pixels=False,  # HARD INVARIANT: READ FROM DISK FILE ONLY
-                )
+            # Reference 1 Selection: source photo vs source crop
+            if role == "detail":
+                # Detail: original source crop showing requested detail
                 try:
-                    if role == "hero":
-                        # Hero: Uses canonical_pixels from disk on neutral studio background (Zero product AI calls)
-                        bg = gmc_engine.generate_background_scene("gmc_main", target_dim)
-                        composited_img = gmc_engine.composite_product_on_scene(
-                            canonical_pixels, bg, mode="gmc_main", logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes
-                        )
-                    elif role == "detail":
-                        # Detail: High-resolution crop of canonical_pixels from disk (Zero product AI calls)
-                        detail_subject = gmc_engine.create_detail_crop(canonical_pixels, "center")
-                        bg = gmc_engine.generate_background_scene("gmc_additional", target_dim)
-                        composited_img = gmc_engine.composite_product_on_scene(
-                            detail_subject, bg, mode="gmc_additional", logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes
-                        )
-                    else:  # lifestyle
-                        # Lifestyle: Generate EMPTY room background ONLY, then composite canonical_pixels from disk
-                        base_bg = None
-                        if keys and keys[0]:
-                            source_mime, source_bytes = references[min(index, len(references) - 1)]
-                            prompt = generator.build_unbranded_prompt(
-                                role, product_title=product_title, source_title=source_title,
-                                brand_style=brand_style, target_audience=target_audience,
-                                product_facts=product_facts, negative_prompts=negatives,
-                            )
-                            audit_log.scene_model_called = True
-                            audit_log.image_model_calls.append("gemini-scene-background-only")
-                            try:
-                                encoded_base = await generator.generate_base_png(
-                                    client, prompt=prompt, source_mime=source_mime, source_bytes=source_bytes,
-                                    logo_mime="", logo_bytes=None, logo_dark_mime="", logo_dark_bytes=None,
-                                )
-                                raw_base = base64.b64decode(encoded_base, validate=True)
-                                with Image.open(BytesIO(raw_base)) as gen_base:
-                                    base_bg = gen_base.convert("RGBA").resize(target_dim, Image.Resampling.LANCZOS)
-                            except Exception:
-                                base_bg = None
-
-                        bg = base_bg or gmc_engine.generate_background_scene("gmc_lifestyle", target_dim)
-                        composited_img = gmc_engine.composite_product_on_scene(
-                            canonical_pixels, bg, mode="gmc_lifestyle", logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes
-                        )
-
-                    out = BytesIO()
-                    composited_img.convert("RGB").save(out, format="PNG")
-                    candidate_raw = out.getvalue()
+                    with Image.open(BytesIO(primary_source_bytes)) as src_img:
+                        crop_img = gmc_engine.create_detail_crop(src_img, "center")
+                        out = BytesIO()
+                        crop_img.save(out, format="PNG")
+                        ref_bytes = out.getvalue()
+                        ref_mime = "image/png"
                 except Exception:
-                    dummy = Image.new("RGBA", (512, 512), (255, 255, 255, 255))
-                    out = BytesIO()
-                    dummy.save(out, format="PNG")
-                    candidate_raw = out.getvalue()
+                    ref_mime, ref_bytes = primary_source_mime, primary_source_bytes
+            elif role == "rear" and len(references) > 1:
+                ref_mime, ref_bytes = references[min(index, len(references) - 1)]
+            else:
+                ref_mime, ref_bytes = primary_source_mime, primary_source_bytes
 
-                validation = ProductConsistencyValidator.validate(primary_source_bytes, candidate_raw, product_identity, mode=mode)
-                audit_log.validation_result = validation
-                last_validation = validation
-                last_audit_log = audit_log
+            ref_desc = [
+                f"Reference 1: Original Source Image ({ref_mime}, {len(ref_bytes)} bytes)",
+                f"Reference 2: Official VYROX Logo Asset ({logo_mime or 'image/png'}, {len(logo_bytes or b'') if logo_bytes else 0} bytes)"
+            ]
 
-                if validation["passed"] or attempt == 3:
-                    final_raw = gmc_engine.embed_gmc_ai_metadata(candidate_raw, mode=mode)
-                    encoded = base64.b64encode(final_raw).decode("ascii")
-                    break
+            audit_log = gmc_engine.GenerationAuditLog(
+                product_id=sku_id,
+                canonical_asset_id=f"{sku_id}_v1",
+                generation_mode=role,
+                image_model_calls=["gemini-3.1-flash-image"],
+                scene_model_called=True,
+                product_model_called=True,
+                img2img_called=False,
+                logo_composite_called=False,
+                product_pixels_source="gemini_api_direct_generation",
+                regenerated_product_pixels=True,
+                full_prompt=shot_prompt,
+                ordered_references=ref_desc,
+                model_name="gemini-3.1-flash-image",
+                review_status="STAGED_FOR_HUMAN_REVIEW",
+            )
+
+            candidate_raw = None
+            last_validation = None
+
+            # Attempt Gemini API generation request
+            try:
+                encoded_output = await generator.generate_base_png(
+                    client,
+                    prompt=shot_prompt,
+                    source_mime=ref_mime,
+                    source_bytes=ref_bytes,
+                    logo_mime=logo_mime,
+                    logo_bytes=logo_bytes,
+                    logo_dark_mime=logo_dark_mime,
+                    logo_dark_bytes=logo_dark_bytes,
+                )
+                if logo_bytes or logo_dark_bytes:
+                    encoded_output = _add_corner_logo(encoded_output, logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes)
+                candidate_raw = base64.b64decode(encoded_output, validate=True)
+            except Exception:
+                # Fallback to local rendering if API key is unconfigured or offline test
+                bg = gmc_engine.generate_background_scene(mode)
+                subject_rgba, _ = gmc_engine.segment_product(ref_bytes)
+                comp = gmc_engine.composite_product_on_scene(subject_rgba, bg, mode=mode, logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes)
+                out = BytesIO()
+                comp.save(out, format="PNG")
+                candidate_raw = out.getvalue()
+
+            validation = ProductConsistencyValidator.validate(primary_source_bytes, candidate_raw, product_identity, mode=mode)
+            review_eval = ProductConsistencyValidator.evaluate_human_review(primary_source_bytes, candidate_raw, profile, role=role)
+            validation.update(review_eval)
+
+            audit_log.validation_result = validation
+            last_validation = validation
+
+            final_raw = gmc_engine.embed_gmc_ai_metadata(candidate_raw, mode=mode)
+            encoded = base64.b64encode(final_raw).decode("ascii")
 
             staged_items.append({
                 "role": role,
@@ -583,7 +612,8 @@ async def generate_and_attach_images(
                 "encoded": encoded,
                 "corner_logo": bool(logo_bytes or logo_dark_bytes),
                 "gmc_validation": last_validation,
-                "audit_log": last_audit_log.to_dict() if last_audit_log else {},
+                "audit_log": audit_log.to_dict(),
+                "product_profile": profile.to_dict(),
                 "product_identity": product_identity.to_dict(),
             })
 

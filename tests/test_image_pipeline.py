@@ -60,7 +60,7 @@ async def check_pipeline():
                 client=client,
             )
     assert result['image_id'] == '456'
-    assert [call.method for call in calls] == ['GET', 'GET', 'POST']
+    assert [call.method for call in calls] == ['GET', 'POST', 'GET', 'POST']
 
 
 async def check_saved_image():
