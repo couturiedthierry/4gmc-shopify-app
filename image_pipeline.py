@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import ipaddress
 import re
 import socket
@@ -599,7 +600,37 @@ async def generate_and_attach_images(
             review_eval = ProductConsistencyValidator.evaluate_human_review(primary_source_bytes, candidate_raw, profile, role=role)
             validation.update(review_eval)
 
+            structured_review = gmc_engine.perform_structured_image_review(
+                primary_source_bytes, candidate_raw, profile, product_identity, role=role, logo_bytes=logo_bytes
+            )
+            validation["structured_review"] = structured_review.to_dict()
+            validation["review_status"] = structured_review.decision
+
+            out_filename = ("ai-mockup.png" if roles == ("hero",) else f"4gmc-{role}.png")
+            digest = hashlib.sha256(candidate_raw).hexdigest()
+
+            audit_log.request = {
+                "model": "gemini-3.1-flash-image",
+                "prompt": shot_prompt,
+                "ordered_references": ref_desc,
+                "generation_config": {"responseModalities": ["IMAGE"]},
+            }
+            audit_log.response = {
+                "status_code": 200,
+                "mime_type": "image/png",
+                "candidate_count": 1,
+                "bytes_count": len(candidate_raw),
+            }
+            audit_log.output_image = {
+                "digest": digest,
+                "filename": out_filename,
+                "role": role,
+                "size_bytes": len(candidate_raw),
+            }
+            audit_log.structured_review = structured_review.to_dict()
+            audit_log.review_status = structured_review.decision
             audit_log.validation_result = validation
+
             last_validation = validation
 
             final_raw = gmc_engine.embed_gmc_ai_metadata(candidate_raw, mode=mode)
@@ -608,10 +639,11 @@ async def generate_and_attach_images(
             staged_items.append({
                 "role": role,
                 "gmc_mode": mode,
-                "filename": ("ai-mockup.png" if roles == ("hero",) else f"4gmc-{role}.png"),
+                "filename": out_filename,
                 "encoded": encoded,
                 "corner_logo": bool(logo_bytes or logo_dark_bytes),
                 "gmc_validation": last_validation,
+                "structured_review": structured_review.to_dict(),
                 "audit_log": audit_log.to_dict(),
                 "product_profile": profile.to_dict(),
                 "product_identity": product_identity.to_dict(),

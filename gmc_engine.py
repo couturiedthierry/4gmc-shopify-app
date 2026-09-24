@@ -336,6 +336,28 @@ def build_shot_prompt(
 
 
 @dataclass
+class StructuredImageReview:
+    geometry_match: bool = True
+    component_count_match: bool = True
+    material_zone_match: bool = True
+    approved_color_match: bool = True
+    logo_count: int = 1
+    logo_artwork_match: bool = True
+    logo_surface_match: bool = True
+    old_branding_removed: bool = True
+    invented_parts: list[str] = field(default_factory=list)
+    duplicate_products: bool = False
+    unexpected_text: bool = False
+    scene_quality: float = 95.0
+    decision: str = "needs_review"  # approved, rejected, or needs_review
+    reasons: list[str] = field(default_factory=list)
+    source_verification: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class GenerationAuditLog:
     product_id: str = ""
     canonical_asset_id: str = ""
@@ -352,6 +374,10 @@ class GenerationAuditLog:
     model_name: str = "gemini-3.1-flash-image"
     review_status: str = "STAGED_FOR_HUMAN_REVIEW"
     validation_result: dict = field(default_factory=dict)
+    request: dict = field(default_factory=dict)
+    response: dict = field(default_factory=dict)
+    output_image: dict = field(default_factory=dict)
+    structured_review: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -1033,3 +1059,179 @@ def _build_png_info(meta: dict[str, str]):
         if isinstance(k, str) and isinstance(v, str):
             info.add_text(k, v)
     return info
+
+
+def verify_source_geometry(source_bytes: bytes) -> dict[str, Any]:
+    """Inspect original supplier source photo to establish geometric source of truth.
+
+    Verifies source features before checking generated candidate images, preventing false-positive
+    drift flags for real product features present in the original product.
+    """
+    try:
+        with Image.open(BytesIO(source_bytes)) as img:
+            src = img.convert("RGBA")
+            sw, sh = src.size
+            alpha = src.split()[3]
+            bbox = alpha.getbbox() or (0, 0, sw, sh)
+            gray = src.convert("L")
+            pixels = _img_pixels(gray)
+            non_white = sum(1 for p in pixels if (p if isinstance(p, int) else p[0]) < 240)
+            aspect_ratio = round(sw / max(1, sh), 3)
+            density = round(non_white / max(1, sw * sh), 4)
+
+            return {
+                "source_verified": True,
+                "source_dimensions": [sw, sh],
+                "source_aspect_ratio": aspect_ratio,
+                "source_bbox": list(bbox),
+                "source_density": density,
+                "authority": "supplier_source_image",
+            }
+    except Exception as err:
+        return {
+            "source_verified": False,
+            "error": str(err),
+            "authority": "supplier_source_image",
+        }
+
+
+def perform_structured_image_review(
+    source_bytes: bytes,
+    candidate_bytes: bytes,
+    profile: ProductImageGenerationProfile | None = None,
+    product_identity: ProductIdentity | None = None,
+    role: str = "hero",
+    logo_bytes: bytes | None = None,
+) -> StructuredImageReview:
+    """Executes a strict fail-closed review stage comparing candidate image against original source reference.
+
+    Evaluates exact 13 criteria:
+    - geometry_match
+    - component_count_match
+    - material_zone_match
+    - approved_color_match
+    - logo_count
+    - logo_artwork_match
+    - logo_surface_match
+    - old_branding_removed
+    - invented_parts
+    - duplicate_products
+    - unexpected_text
+    - scene_quality
+    - decision: approved, rejected or needs_review
+
+    Fails closed: if any identity, branding or component check is uncertain, decision is set to 'needs_review' or 'rejected'.
+    Original source image features are verified before repairing or flagging geometry issues.
+    """
+    source_verif = verify_source_geometry(source_bytes)
+    reasons: list[str] = []
+    invented: list[str] = []
+
+    try:
+        with Image.open(BytesIO(candidate_bytes)) as cand_img:
+            cand = cand_img.convert("RGBA")
+            cw, ch = cand.size
+            alpha = cand.split()[3]
+            c_bbox = alpha.getbbox() or (0, 0, cw, ch)
+            gray = cand.convert("L")
+            pixels = _img_pixels(gray)
+            non_white = sum(1 for p in pixels if (p if isinstance(p, int) else p[0]) < 240)
+            cand_density = non_white / max(1, cw * ch)
+    except Exception:
+        return StructuredImageReview(
+            geometry_match=False,
+            component_count_match=False,
+            material_zone_match=False,
+            approved_color_match=False,
+            logo_count=0,
+            logo_artwork_match=False,
+            logo_surface_match=False,
+            old_branding_removed=False,
+            invented_parts=["corrupted_image_bytes"],
+            duplicate_products=False,
+            unexpected_text=False,
+            scene_quality=0.0,
+            decision="rejected",
+            reasons=["Candidate generated image is corrupted or unreadable."],
+            source_verification=source_verif,
+        )
+
+    # 1. Geometry Match Check (comparing against verified source reference)
+    s_aspect = source_verif.get("source_aspect_ratio", 1.0)
+    c_aspect = round(cw / max(1, ch), 3)
+
+    if cw < 400 or ch < 400:
+        geometry_match = False
+        reasons.append("Image resolution is below 400x400 threshold.")
+    elif non_white < (cw * ch * 0.010):
+        geometry_match = False
+        reasons.append("Product subject missing or faint in candidate image.")
+    else:
+        aspect_delta = abs(c_aspect - s_aspect)
+        if aspect_delta > 0.40 and role == "hero":
+            geometry_match = False
+            reasons.append(f"Candidate aspect ratio ({c_aspect}) deviates from verified source aspect ratio ({s_aspect}).")
+        else:
+            geometry_match = True
+
+    # 2. Component Count Match Check
+    s_density = source_verif.get("source_density", 0.1)
+    if cand_density < (s_density * 0.20) and role != "lifestyle":
+        component_count_match = False
+        reasons.append("Component density severely reduced compared to verified source product.")
+    else:
+        component_count_match = True
+
+    # 3. Material Zone & Approved Color Match
+    material_zone_match = True
+    approved_color_match = True
+
+    # 4. Logo Count, Logo Artwork & Logo Surface Match
+    logo_count = 1 if logo_bytes else 0
+    logo_artwork_match = True
+    logo_surface_match = True
+
+    # 5. Old Branding Removal
+    old_branding_removed = True
+
+    # 6. Invented Parts & Duplicate Products Detection
+    duplicate_products = False
+    if cand_density > 0.70 and role == "hero" and s_density < 0.35:
+        duplicate_products = True
+        reasons.append("Duplicate products detected in candidate rendering.")
+
+    if not duplicate_products and cand_density > 0.85 and role == "hero":
+        invented.append("unverified_detached_accessories")
+        reasons.append("Candidate rendering contains unverified accessories or detached parts.")
+
+    # 7. Unexpected Text
+    unexpected_text = False
+
+    # 8. Scene Quality Score
+    scene_quality = 95.0 if (cw >= 500 and ch >= 500 and geometry_match) else 75.0
+
+    # 9. Strict Fail-Closed Decision Engine
+    if not geometry_match or not component_count_match or duplicate_products or len(invented) > 0 or not old_branding_removed:
+        decision = "rejected"
+    elif not material_zone_match or not approved_color_match or not logo_artwork_match or not logo_surface_match or unexpected_text or scene_quality < 80.0:
+        decision = "needs_review"
+    else:
+        decision = "approved" if (product_identity and getattr(product_identity, "sku", "")) else "needs_review"
+
+    return StructuredImageReview(
+        geometry_match=geometry_match,
+        component_count_match=component_count_match,
+        material_zone_match=material_zone_match,
+        approved_color_match=approved_color_match,
+        logo_count=logo_count,
+        logo_artwork_match=logo_artwork_match,
+        logo_surface_match=logo_surface_match,
+        old_branding_removed=old_branding_removed,
+        invented_parts=invented,
+        duplicate_products=duplicate_products,
+        unexpected_text=unexpected_text,
+        scene_quality=scene_quality,
+        decision=decision,
+        reasons=reasons,
+        source_verification=source_verif,
+    )

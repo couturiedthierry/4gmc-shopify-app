@@ -99,6 +99,37 @@ class TestGMCImageEngine(unittest.TestCase):
         self.assertIn("watermark", negs)
         self.assertIn("logo", negs)
 
+    def test_structured_image_review(self):
+        identity = gmc_engine.build_product_identity(self.source_bytes, sku="SKU-999")
+        profile = gmc_engine.create_product_image_profile("999", ["https://cdn.example.com/src.jpg"], "Item", "Item")
+        
+        # Test review against original source bytes
+        review = gmc_engine.perform_structured_image_review(
+            self.source_bytes, self.source_bytes, profile=profile, product_identity=identity, role="hero"
+        )
+        d = review.to_dict()
+        
+        # Assert exact 13 required fields are present
+        required_keys = [
+            "geometry_match", "component_count_match", "material_zone_match",
+            "approved_color_match", "logo_count", "logo_artwork_match",
+            "logo_surface_match", "old_branding_removed", "invented_parts",
+            "duplicate_products", "unexpected_text", "scene_quality", "decision"
+        ]
+        for key in required_keys:
+            self.assertIn(key, d, f"Missing required review key: {key}")
+            
+        self.assertIn(review.decision, {"approved", "rejected", "needs_review"})
+        self.assertTrue(d["source_verification"]["source_verified"])
+        self.assertEqual(d["source_verification"]["authority"], "supplier_source_image")
+
+        # Verify fail-closed behavior on corrupted bytes
+        corrupted_review = gmc_engine.perform_structured_image_review(
+            self.source_bytes, b"corrupted-bytes", profile=profile, product_identity=identity
+        )
+        self.assertEqual(corrupted_review.decision, "rejected")
+        self.assertFalse(corrupted_review.geometry_match)
+
 
 if __name__ == "__main__":
     unittest.main()
