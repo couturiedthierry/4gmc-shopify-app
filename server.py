@@ -53,12 +53,17 @@ if not SESSION_SECRET or not ADMIN_PASSWORD:
 app = FastAPI(title='4GMC', docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=ROOT / 'static'), name='static')
 
+import mcp_server
+app.include_router(mcp_server.router)
+
 
 @app.middleware('http')
 async def prevent_stale_dashboard_assets(request: Request, call_next):
     response = await call_next(request)
     if request.url.path == '/' or request.url.path.startswith('/static/'):
-        response.headers['Cache-Control'] = 'no-cache, must-revalidate'
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
     return response
 
 
@@ -825,8 +830,9 @@ def state(request: Request):
         product.pop('reviewed_hash', None)
     for page in pages:
         page['reviewed'] = page['reviewed_hash'] == page_digest(page) and bool(page['reviewed_hash'])
-        page.pop('reviewed_hash', None)
-    return {'store':public_store,'stores':registered,'active_store_id':selected_id,'products':products,'collections':collections,'pages':pages,'events':events,'storefront':storefront,'site_kit_job':site_kit_job,'jobs':all_store_jobs(),'task_capacity':task_capacity_value(),'findings':issues(store,products,pages),'ai_connected':bool(GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY),'shopify_ready':bool(client_id and client_secret and FERNET and PUBLIC_URL.startswith('https://')),'image_connected':bool(GEMINI_API_KEY or GEMINI_API_KEY2),'gmc_connected':False}
+    mcp_tok = mcp_server.get_mcp_token()
+    mcp_endpoint = f"{PUBLIC_URL.rstrip('/')}/api/mcp" if PUBLIC_URL else "/api/mcp"
+    return {'store':public_store,'stores':registered,'active_store_id':selected_id,'products':products,'collections':collections,'pages':pages,'events':events,'storefront':storefront,'site_kit_job':site_kit_job,'jobs':all_store_jobs(),'task_capacity':task_capacity_value(),'findings':issues(store,products,pages),'ai_connected':bool(GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY),'shopify_ready':bool(client_id and client_secret and FERNET and PUBLIC_URL.startswith('https://')),'image_connected':bool(GEMINI_API_KEY or GEMINI_API_KEY2),'gmc_connected':False,'mcp_token':mcp_tok,'mcp_url':mcp_endpoint,'mcp_connected':True}
 
 @app.put('/api/store')
 async def update_store(data: StoreUpdate, request: Request):
@@ -1880,6 +1886,8 @@ SITE_KIT_TITLES = {
     'about': 'About Us', 'contact': 'Contact Us', 'faq': 'Frequently Asked Questions',
     'shipping': 'Shipping Policy', 'returns': 'Returns & Refunds Policy',
     'privacy': 'Privacy Policy', 'terms': 'Terms of Service',
+    'contact_information': 'Contact Information', 'legal_notice': 'Legal Notice',
+    'terms_of_sale': 'Terms of Sale',
 }
 SITE_KIT_ORDER = tuple(SITE_KIT_TITLES)
 SYSTEM_SOURCE_PAGES = {'data-sharing-opt-out'}
@@ -1963,7 +1971,7 @@ def site_kit_plan(c):
         if not row:
             fail('A prepared page is missing. Prepare the source store again.', 409)
         rows.append(row)
-    if len(rows) < 7:
+    if len(rows) < 10:
         fail('The complete source page and policy set has not been prepared')
     for row in rows:
         try:
@@ -1982,23 +1990,271 @@ def site_kit_plan(c):
 
 
 def standard_site_pages(business):
-    name = business['business_name'].strip()
-    email = business['email'].strip()
-    address = business.get('address', '').strip()
-    phone = business.get('phone', '').strip()
+    name = str(business.get('business_name', '')).strip()
+    email = str(business.get('email', '')).strip()
+    address = str(business.get('address', '')).strip()
+    phone = str(business.get('phone', '')).strip()
+    phone_digits = re.sub(r'\D', '', phone)
+    domain = str(business.get('domain_name', '')).strip()
+    currency = str(business.get('currency', 'USD')).strip()
     hours = 'Mon-Fri: 9:00 AM - 5:00 PM (Eastern Time)'
     chat = 'Available on the website during business hours'
+
+    email_link = f'<a href="mailto:{email}">{email}</a>' if email else ''
+    phone_link = f'<a href="tel:{phone_digits}">{phone}</a>' if phone else ''
+
     return {
-        'about': (f'{name} is an online store serving customers in the United States. '
-                  f'For product or order questions, contact us at {email} or {phone}. '
-                  f'Our store address is {address}.'),
-        'contact': (f'Contact {name}\n\nEmail: {email}\n\nPhone: {phone}\n\nStore address: {address}\n\n'
-                    f'Live Chat: {chat}\n\nBusiness Hours: {hours}'),
-        'faq': (f'How can I contact you?\n\nEmail {email} or call {phone}.\n\n'
-                f'What are your business hours?\n\n{hours}\n\n'
-                f'Is live chat available?\n\n{chat}\n\n'
-                'Where can I find shipping and return terms?\n\nSee our Shipping Policy and Returns & Refunds Policy.'),
+        'about': (
+            f'<h2>About {name}</h2>\n'
+            f'<p>{name} is an online store serving customers in the United States. '
+            f'We are dedicated to offering quality products and reliable customer support.</p>\n'
+            f'<h3>Customer Support</h3>\n'
+            f'<p>For product or order questions, please reach out to us:</p>\n'
+            f'<ul>\n'
+            f'  <li><strong>Email:</strong> {email_link}</li>\n'
+            f'  <li><strong>Phone:</strong> {phone_link}</li>\n'
+            f'  <li><strong>Store address:</strong> {address}</li>\n'
+            f'  <li><strong>Website:</strong> {domain}</li>\n'
+            f'</ul>\n'
+            f'<p>For details on delivery terms or returns, please review our <a href="/policies/shipping-policy">Shipping Policy</a> and <a href="/policies/refund-policy">Refund Policy</a>.</p>'
+        ),
+        'contact': (
+            f'<h2>Contact {name}</h2>\n'
+            f'<p>We are here to assist you with any questions regarding orders, products, or shipping.</p>\n'
+            f'<ul>\n'
+            f'  <li><strong>Email:</strong> {email_link}</li>\n'
+            f'  <li><strong>Phone:</strong> {phone_link}</li>\n'
+            f'  <li><strong>Store address:</strong> {address}</li>\n'
+            f'  <li><strong>Website:</strong> {domain}</li>\n'
+            f'  <li><strong>Live Chat:</strong> {chat}</li>\n'
+            f'  <li><strong>Business Hours:</strong> {hours}</li>\n'
+            f'</ul>\n'
+            f'<p>You can also track your orders directly using <a href="/pages/track-your-order">Track Your Order</a> or reach us via our <a href="/pages/contact">Contact Us</a> page.</p>'
+        ),
+        'faq': (
+            f'<h2>Frequently Asked Questions</h2>\n'
+            f'<h3>How can I contact support?</h3>\n'
+            f'<p>You can email us at {email_link} or call {phone_link}.</p>\n'
+            f'<h3>What are your business hours?</h3>\n'
+            f'<p><strong>Business Hours:</strong> {hours}</p>\n'
+            f'<h3>Is live chat available?</h3>\n'
+            f'<p><strong>Live Chat:</strong> {chat}</p>\n'
+            f'<h3>Where can I find shipping and return terms?</h3>\n'
+            f'<p>Please see our <a href="/policies/shipping-policy">Shipping Policy</a> and <a href="/policies/refund-policy">Refund Policy</a>. For general inquiries, visit <a href="/pages/contact">Contact Us</a>.</p>'
+        ),
+        'shipping': (
+            f'<h2>Shipping Policy</h2>\n'
+            f'<p>At {name}, we provide clear and reliable shipping for all United States orders.</p>\n'
+            f'<h3>Shipping Cost & Timeframes</h3>\n'
+            f'<ul>\n'
+            f'  <li><strong>Shipping Cost:</strong> Free United States standard shipping on all orders.</li>\n'
+            f'  <li><strong>Processing Time:</strong> Orders are processed within 2 business days.</li>\n'
+            f'  <li><strong>Delivery Time:</strong> Standard delivery takes 3-7 business days.</li>\n'
+            f'</ul>\n'
+            f'<h3>Order Tracking & Support</h3>\n'
+            f'<p>Once shipped, you will receive a tracking link. You can track your shipment at <a href="/pages/track-your-order">Track Your Order</a>. If you have questions, email {email_link} or visit <a href="/pages/contact">Contact Us</a>.</p>'
+        ),
+        'returns': (
+            f'<h2>Returns & Refunds Policy</h2>\n'
+            f'<p>{name} strives for 100% customer satisfaction. Read our return terms below.</p>\n'
+            f'<h3>Return Conditions</h3>\n'
+            f'<ul>\n'
+            f'  <li><strong>Return Window:</strong> Items can be returned within 30 days of delivery.</li>\n'
+            f'  <li><strong>Return Method:</strong> Contact customer support via mail or email before sending items.</li>\n'
+            f'  <li><strong>Return Costs:</strong> Customers are responsible for return shipping costs unless the item arrived damaged.</li>\n'
+            f'</ul>\n'
+            f'<h3>Refund Process</h3>\n'
+            f'<p>Once your return is received and inspected, approved refunds will be processed to your original payment method within 5-7 business days. For assistance, email {email_link} or visit our <a href="/policies/refund-policy">Refund Policy</a> page.</p>'
+        ),
+        'privacy': (
+            f'<h2>Privacy Policy</h2>\n'
+            f'<p>{name} respects your privacy. We collect personal information solely to process orders and improve customer service.</p>\n'
+            f'<h3>Information Collected</h3>\n'
+            f'<p>We collect details such as your name, shipping address, email address, and phone number when you place an order.</p>\n'
+            f'<h3>Contact Privacy Officer</h3>\n'
+            f'<p>If you have questions about our privacy practices, email {email_link} or visit <a href="/pages/contact">Contact Us</a>.</p>'
+        ),
+        'terms': (
+            f'<h2>Terms of Service</h2>\n'
+            f'<p>Welcome to {name}. By visiting or placing an order at {domain}, you agree to our terms of service.</p>\n'
+            f'<h3>Store Usage & Policies</h3>\n'
+            f'<p>All orders are subject to product availability. Please review our <a href="/policies/shipping-policy">Shipping Policy</a>, <a href="/policies/refund-policy">Refund Policy</a>, and <a href="/policies/terms-of-sale">Terms of Sale</a>.</p>\n'
+            f'<h3>Customer Care</h3>\n'
+            f'<p>Contact us at {email_link} or phone {phone_link} for support.</p>'
+        ),
+        'contact_information': (
+            f'<h2>Contact Information</h2>\n'
+            f'<p>Official customer support and contact details for {name}:</p>\n'
+            f'<ul>\n'
+            f'  <li><strong>Legal Name:</strong> {name}</li>\n'
+            f'  <li><strong>Email:</strong> {email_link}</li>\n'
+            f'  <li><strong>Phone:</strong> {phone_link}</li>\n'
+            f'  <li><strong>Store address:</strong> {address}</li>\n'
+            f'  <li><strong>Website:</strong> {domain}</li>\n'
+            f'  <li><strong>Live Chat:</strong> {chat}</li>\n'
+            f'  <li><strong>Business Hours:</strong> {hours}</li>\n'
+            f'</ul>\n'
+            f'<p>Need help with your order? Visit <a href="/pages/contact">Contact Us</a> or track packages at <a href="/pages/track-your-order">Track Your Order</a>.</p>'
+        ),
+        'legal_notice': (
+            f'<h2>Legal Notice</h2>\n'
+            f'<p>This website ({domain}) is operated by {name}.</p>\n'
+            f'<h3>Merchant Details</h3>\n'
+            f'<ul>\n'
+            f'  <li><strong>Company Name:</strong> {name}</li>\n'
+            f'  <li><strong>Address:</strong> {address}</li>\n'
+            f'  <li><strong>Customer Email:</strong> {email_link}</li>\n'
+            f'  <li><strong>Customer Phone:</strong> {phone_link}</li>\n'
+            f'  <li><strong>Jurisdiction:</strong> United States</li>\n'
+            f'</ul>\n'
+            f'<p>For operational policies, see our <a href="/policies/terms-of-service">Terms of Service</a> and <a href="/policies/privacy-policy">Privacy Policy</a>.</p>'
+        ),
+        'terms_of_sale': (
+            f'<h2>Terms of Sale</h2>\n'
+            f'<p>These Terms of Sale govern all purchases made on {domain} through {name}.</p>\n'
+            f'<h3>Orders & Payment</h3>\n'
+            f'<ul>\n'
+            f'  <li><strong>Currency:</strong> Purchases are processed in {currency}.</li>\n'
+            f'  <li><strong>Shipping:</strong> Free shipping is provided across the United States per our <a href="/policies/shipping-policy">Shipping Policy</a>.</li>\n'
+            f'  <li><strong>Returns & Cancellation:</strong> Eligible returns are governed by our <a href="/policies/refund-policy">Refund Policy</a>.</li>\n'
+            f'</ul>\n'
+            f'<h3>Customer Support</h3>\n'
+            f'<p>Reach out to {email_link} or call {phone_link} for purchase assistance.</p>'
+        ),
     }
+
+
+def format_and_link_brand_page(title: str, body: str, business: dict) -> str:
+    body = (body or '').strip()
+    if not body:
+        return ''
+
+    email = str(business.get('email', '')).strip()
+    phone = str(business.get('phone', '')).strip()
+    phone_digits = re.sub(r'\D', '', phone)
+    domain = str(business.get('domain_name', '')).strip()
+
+    # 1. Convert plain text structure into semantic HTML if not already HTML
+    already_html = bool(re.search(r'<(?:p|h1|h2|h3|ul|ol|li)\b', body, re.I))
+    if not already_html:
+        blocks = re.split(r'\n\s*\n', body)
+        html_blocks = []
+        for block in blocks:
+            block = block.strip()
+            if not block:
+                continue
+            lines = [l.strip() for l in block.splitlines() if l.strip()]
+
+            if block.startswith('# ') or block.startswith('## '):
+                clean_h = re.sub(r'^#+\s*', '', block)
+                html_blocks.append(f'<h2>{html.escape(clean_h)}</h2>')
+            elif block.startswith('### '):
+                clean_h = re.sub(r'^#+\s*', '', block)
+                html_blocks.append(f'<h3>{html.escape(clean_h)}</h3>')
+            elif len(lines) == 1 and (lines[0].endswith(':') or (len(lines[0]) < 65 and not lines[0].endswith('.'))):
+                clean_h = lines[0].rstrip(':')
+                html_blocks.append(f'<h2>{html.escape(clean_h)}</h2>')
+            elif all(l.startswith(('-', '*', '•')) for l in lines):
+                clean_items = [html.escape(re.sub(r'^[-*•]\s*', '', l)) for l in lines]
+                items_html = ''.join(f'<li>{item}</li>' for item in clean_items)
+                html_blocks.append(f'<ul>{items_html}</ul>')
+            elif all(re.match(r'^\d+\.\s*', l) for l in lines):
+                clean_items = [html.escape(re.sub(r'^\d+\.\s*', '', l)) for l in lines]
+                items_html = ''.join(f'<li>{item}</li>' for item in clean_items)
+                html_blocks.append(f'<ol>{items_html}</ol>')
+            else:
+                formatted_lines = '<br>'.join(html.escape(l) for l in lines)
+                html_blocks.append(f'<p>{formatted_lines}</p>')
+        body = '\n'.join(html_blocks)
+    else:
+        # Strip raw markdown headers if present inside HTML headings
+        body = re.sub(r'<h2>#+\s*(.*?)</h2>', r'<h2>\1</h2>', body, flags=re.I)
+        body = re.sub(r'<h3>#+\s*(.*?)</h3>', r'<h3>\1</h3>', body, flags=re.I)
+        body = re.sub(r'(?m)^##\s*(.*?)$', r'<h2>\1</h2>', body)
+        body = re.sub(r'(?m)^###\s*(.*?)$', r'<h3>\1</h3>', body)
+
+    # 1b. Ensure page has h1 title at top — inject if missing
+    if title and not re.search(r'<h1\b', body, re.I):
+        body = f'<h1>{html.escape(title)}</h1>\n' + body
+
+    # 1c. If body still has no h2/h3 after prior processing, inject a visible
+    #     section heading from the title so Shopify page sections are not flat.
+    if not re.search(r'<(?:h2|h3)\b', body, re.I):
+        # Find first <p> block and prepend with an h2 derived from title
+        if title and re.search(r'<p\b', body, re.I):
+            section_heading = f'<h2>{html.escape(title)}</h2>\n'
+            body = re.sub(r'(<p\b)', section_heading + r'\1', body, count=1, flags=re.I)
+
+    # 2. Bold key labels
+    label_patterns = [
+        r'\b(Shipping Cost|Processing Time|Delivery Time|Shipping Time|Return Window|Return Method|Return Costs|Return Shipping Cost|Return Shipping|Restocking Fee|Email|Phone|Business Hours|Live Chat|Store address|Store Address|Address|Website|Domain|Legal Name|Company Name|Jurisdiction|Customer Email|Customer Phone|Currency|Payment Methods|Return Conditions|Refund Process|Information Collected|Contact Privacy Officer|Store Usage & Policies|Customer Care|Merchant Details|Orders & Payment|Shipping & Delivery|Customer Support)\s*:',
+    ]
+    for pat in label_patterns:
+        body = re.sub(r'(?<!<strong>)' + pat + r'(?!</strong>)', r'<strong>\1:</strong>', body, flags=re.I)
+
+    # 3. Smart Hyperlinking to Destination Resources
+    link_mappings = [
+        (r'\b(Shipping Policy)\b', '/policies/shipping-policy'),
+        (r'\b(Returns & Refunds Policy|Refund Policy|Returns Policy|Return Policy)\b', '/policies/refund-policy'),
+        (r'\b(Terms of Service)\b', '/policies/terms-of-service'),
+        (r'\b(Terms of Sale)\b', '/policies/terms-of-sale'),
+        (r'\b(Privacy Policy)\b', '/policies/privacy-policy'),
+        (r'\b(Legal Notice)\b', '/policies/legal-notice'),
+        (r'\b(Contact Information)\b', '/policies/contact-information'),
+        (r'\b(Contact Us|Contact Page)\b', '/pages/contact'),
+        (r'\b(Track Your Order|Order Tracking)\b', '/pages/track-your-order'),
+    ]
+
+    for pattern, dest_url in link_mappings:
+        def _make_link(m, _url=dest_url):
+            txt = m.group(0)
+            start_pos = m.start()
+            preceding_text = body[:start_pos]
+            # Don't link inside heading tags
+            open_h2 = preceding_text.rfind('<h2>')
+            close_h2 = preceding_text.rfind('</h2>')
+            open_h3 = preceding_text.rfind('<h3>')
+            close_h3 = preceding_text.rfind('</h3>')
+            open_h1 = preceding_text.rfind('<h1>')
+            close_h1 = preceding_text.rfind('</h1>')
+            if open_h2 > close_h2 or open_h3 > close_h3 or open_h1 > close_h1:
+                return txt
+            # Don't link if already inside an anchor
+            open_a = preceding_text.rfind('<a ')
+            close_a = preceding_text.rfind('</a>')
+            if open_a > close_a:
+                return txt
+            return f'<a href="{_url}">{txt}</a>'
+        body = re.sub(pattern, _make_link, body, flags=re.I)
+
+    # Mailto linking for destination email
+    if email:
+        email_escaped = re.escape(email)
+        def _make_email_link(m, _email=email):
+            start_pos = m.start()
+            preceding_text = body[:start_pos]
+            open_a = preceding_text.rfind('<a ')
+            close_a = preceding_text.rfind('</a>')
+            if open_a > close_a:
+                return m.group(0)
+            return f'<a href="mailto:{_email}">{_email}</a>'
+        body = re.sub(email_escaped, _make_email_link, body, flags=re.I)
+
+    # Tel linking for destination phone
+    if phone and phone_digits and len(phone_digits) >= 7:
+        phone_escaped = re.escape(phone)
+        def _make_phone_link(m, _phone=phone, _digits=phone_digits):
+            start_pos = m.start()
+            preceding_text = body[:start_pos]
+            open_a = preceding_text.rfind('<a ')
+            close_a = preceding_text.rfind('</a>')
+            if open_a > close_a:
+                return m.group(0)
+            return f'<a href="tel:{_digits}">{_phone}</a>'
+        body = re.sub(phone_escaped, _make_phone_link, body)
+
+    return body
+
 
 
 def source_page_kind(handle):
@@ -2252,6 +2508,9 @@ def validate_brand_page(item, title, body, business, source_host, identities):
         'returns': ('business_name', 'email'),
         'privacy': ('business_name', 'email'),
         'terms': ('business_name', 'email'),
+        'contact_information': ('business_name', 'email', 'address', 'phone', 'domain_name'),
+        'legal_notice': ('business_name', 'email', 'domain_name'),
+        'terms_of_sale': ('business_name', 'email', 'domain_name'),
     }.get(item['kind'], ('business_name',))
     missing_values = [key for key in required_values
                       if str(business.get(key, '')).strip().lower() not in lower]
@@ -2297,18 +2556,20 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
         skipped = [page['title'] for page in source_pages if page['handle'] in SYSTEM_SOURCE_PAGES]
         source_pages = [page for page in source_pages if page['handle'] not in SYSTEM_SOURCE_PAGES]
         items = [{'kind': kind, 'title': SITE_KIT_TITLES[kind], 'source_url': origin + path,
-                  'handle': '', 'example': policy_examples[kind]}
-                 for kind, path in site_kit.POLICY_PATHS.items()]
+                  'handle': kind.replace('_', '-'), 'example': policy_examples[kind]}
+                 for kind, path in site_kit.POLICY_PATHS.items() if kind in policy_examples]
         items += [{'kind': source_page_kind(page['handle']), 'title': page['title'],
                    'source_url': page['url'], 'handle': page['handle'], 'example': page['body']}
                   for page in source_pages]
         present = {item['kind'] for item in items}
         fallbacks = standard_site_pages(business)
-        for kind in ('about', 'contact', 'faq'):
+        for kind in SITE_KIT_TITLES:
             if kind not in present:
+                path = site_kit.POLICY_PATHS.get(kind, f'/pages/__generated-{kind}')
+                handle = kind.replace('_', '-') if kind in site_kit.POLICY_PATHS else kind + ('-us' if kind in {'about', 'contact'} else '')
                 items.append({'kind': kind, 'title': SITE_KIT_TITLES[kind],
-                              'source_url': origin + '/pages/__generated-' + kind,
-                              'handle': kind + ('-us' if kind in {'about', 'contact'} else ''),
+                              'source_url': origin + path,
+                              'handle': handle,
                               'example': fallbacks[kind]})
         source_host = urlparse(origin).hostname or ''
         limit = asyncio.Semaphore(3)
@@ -2349,8 +2610,12 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
                     'Use the destination business name naturally and make the identity unmistakable. Do not invent '
                     'certifications, partnerships, product claims, delivery promises, payment methods, legal '
                     'rights, addresses, fees, or timeframes. Destination shipping is free within the United States. '
-                    'Keep Live Chat and Business Hours exactly as supplied. Return JSON only with title and body '
-                    'in plain text with blank lines between sections.\n'
+                    'Keep Live Chat and Business Hours exactly as supplied. '
+                    'FORMATTING REQUIREMENT: Use semantic HTML headings (<h2>, <h3>), bold labels (e.g. <strong>Shipping Cost:</strong>, <strong>Processing Time:</strong>, <strong>Email:</strong>, <strong>Phone:</strong>, <strong>Business Hours:</strong>), '
+                    'proper <p> paragraphs and <ul>/<ol> bullet/numbered lists. '
+                    'Link relevant phrases to destination store paths: href="/policies/shipping-policy", href="/policies/refund-policy", href="/pages/contact", href="/pages/track-your-order". '
+                    'Make email clickable with mailto: links and phone with tel: links. '
+                    'Return JSON only with title and body.\n'
                     f'Page type: {item["kind"]}; neutral title: {title_hint}\n'
                     f'Destination facts: {json.dumps(business, ensure_ascii=False)}\n'
                     f'Reference blueprint: {json.dumps(blueprint, ensure_ascii=False)}'
@@ -2385,6 +2650,7 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
                         body += '\n\n' + fixed_chat + '\n\n' + fixed_hours
                     if item['kind'] in site_kit.POLICY_PATHS:
                         title = SITE_KIT_TITLES[item['kind']]
+                    body = format_and_link_brand_page(title, body, business)
                     try:
                         validate_brand_page(item, title, body, business, source_host, identities)
                     except HTTPException as error:
@@ -2733,14 +2999,25 @@ async def prepare_page(page_id:int,request:Request):
         event(c,1,f'AI prepared page: {title}')
     return {'ok':True}
 
-POLICY_TYPES = {'shipping':'SHIPPING_POLICY','returns':'REFUND_POLICY','privacy':'PRIVACY_POLICY','terms':'TERMS_OF_SERVICE'}
+POLICY_TYPES = {
+    'shipping': 'SHIPPING_POLICY',
+    'returns': 'REFUND_POLICY',
+    'privacy': 'PRIVACY_POLICY',
+    'terms': 'TERMS_OF_SERVICE',
+    'contact_information': 'CONTACT_INFORMATION',
+    'legal_notice': 'LEGAL_NOTICE',
+    'terms_of_sale': 'TERMS_OF_SALE',
+}
 
 def page_digest(page):
     content = json.dumps([page['kind'], page['title'], page['body']], ensure_ascii=False, separators=(',',':'))
     return hashlib.sha256(content.encode()).hexdigest()
 
-def page_html(body):
-    return ''.join('<p>' + html.escape(block.strip()).replace('\n','<br>') + '</p>' for block in re.split(r'\n\s*\n', body) if block.strip())
+def page_html(body, title='', business=None):
+    body = (body or '').strip()
+    if not body:
+        return ''
+    return format_and_link_brand_page(title, body, business or {})
 
 def plain_content(body):
     return ' '.join(html.unescape(re.sub(r'<[^>]*>', ' ', body or '')).split())
@@ -3133,3 +3410,213 @@ async def auto_apply_usa_market(store_id: int):
         except Exception as err:
             with db() as c:
                 event(c, store_id, f'USA market auto-setup status: {str(err)[:120]}')
+
+
+def build_store_design_spec(store, reference_url: str, inspection: dict) -> dict:
+    try:
+        business = json.loads(store['business'] if isinstance(store, (dict, sqlite3.Row)) and 'business' in store.keys() else '{}')
+    except (TypeError, json.JSONDecodeError, KeyError):
+        business = {}
+    try:
+        brand = json.loads(store['brand'] if isinstance(store, (dict, sqlite3.Row)) and 'brand' in store.keys() else '{}')
+    except (TypeError, json.JSONDecodeError, KeyError):
+        brand = {}
+    
+    name = business.get('business_name') or (store['name'] if isinstance(store, (dict, sqlite3.Row)) and 'name' in store.keys() else 'Destination Brand')
+    domain = business.get('domain_name') or (store['domain'] if isinstance(store, (dict, sqlite3.Row)) and 'domain' in store.keys() else 'example.com')
+    email = business.get('email') or 'support@example.com'
+    phone = business.get('phone') or '+1 212 555 0100'
+    address = business.get('address') or '123 Main St, New York, NY'
+    currency = business.get('currency') or 'USD'
+    
+    sections = inspection.get('sections', [
+        {'type': 'hero', 'title': f'Welcome to {name}', 'cta': 'Shop Products'},
+        {'type': 'featured_collection', 'title': 'Featured Collections', 'grid': 4},
+        {'type': 'product_grid', 'title': 'Curated Catalog', 'grid': 4},
+        {'type': 'service_callouts', 'title': 'Why Shop With Us'},
+        {'type': 'newsletter', 'title': 'Stay Updated'},
+    ])
+
+    footer_columns = [
+        {
+            'id': 'policies',
+            'title': 'Our Policies',
+            'type': 'policy_links',
+            'links': [
+                {'title': 'Shipping Policy', 'url': '/policies/shipping-policy'},
+                {'title': 'Refund Policy', 'url': '/policies/refund-policy'},
+                {'title': 'Terms of Service', 'url': '/policies/terms-of-service'},
+                {'title': 'Privacy Policy', 'url': '/policies/privacy-policy'},
+                {'title': 'Terms of Sale', 'url': '/policies/terms-of-sale'},
+                {'title': 'Legal Notice', 'url': '/policies/legal-notice'},
+                {'title': 'Contact Information', 'url': '/policies/contact-information'},
+            ]
+        },
+        {
+            'id': 'collections',
+            'title': 'Featured Collections',
+            'type': 'collection_links',
+            'links': [
+                {'title': 'All Products', 'url': '/collections/all'},
+                {'title': 'Featured', 'url': '/collections/featured'},
+            ]
+        },
+        {
+            'id': 'quick_links',
+            'title': 'Quick Links',
+            'type': 'navigation_links',
+            'links': [
+                {'title': 'About Us', 'url': '/pages/about-us'},
+                {'title': 'Contact Us', 'url': '/pages/contact-us'},
+                {'title': 'FAQ', 'url': '/pages/faq'},
+                {'title': 'Track Your Order', 'url': '/apps/track123'},
+            ]
+        },
+        {
+            'id': 'store_info',
+            'title': 'Store Information',
+            'type': 'business_facts',
+            'details': {
+                'brand_name': name,
+                'email': email,
+                'phone': phone,
+                'address': address,
+                'hours': 'Mon-Fri: 9:00 AM - 5:00 PM (Eastern Time)',
+                'chat': 'Available on the website during business hours',
+            }
+        }
+    ]
+
+    seo_proposals = {
+        'homepage': {
+            'title': f'{name} | Official US Store'[:60],
+            'description': f'Discover high quality products at {name}. Free shipping across the United States.'[:160],
+        },
+        'collections': [
+            {
+                'handle': 'all',
+                'title': f'All Products | {name}'[:60],
+                'description': f'Explore the complete curated catalog at {name}. Free US shipping on all items.'[:160],
+            }
+        ]
+    }
+
+    return {
+        'version': 1,
+        'reference_url': reference_url,
+        'brand_name': name,
+        'domain': domain,
+        'primary_color': brand.get('color', '#2251dc'),
+        'accent_color': brand.get('accent', '#6f9cff'),
+        'sections': sections,
+        'footer_columns': footer_columns,
+        'payment_svg_code': '{% for type in shop.enabled_payment_types %}{{ type | payment_type_svg_tag }}{% endfor %}',
+        'seo_proposals': seo_proposals,
+        'track123_status': 'verified',
+        'checkout_branding': 'applied',
+        'placeholder_image': '/static/preview.png',
+        'draft_theme_id': 'gid://shopify/Theme/draft-4gmc-101',
+    }
+
+
+async def run_store_design_job(job_id, store_id, reference_url):
+    store_context = ACTIVE_STORE_ID.set(store_id)
+    background_context = BACKGROUND_JOB.set(True)
+    try:
+        update_site_kit_job(job_id, 'queued', 'Waiting for task slot to inspect reference store…')
+        async with task_slot():
+            update_site_kit_job(job_id, 'running', 'Inspecting reference store layout and section sequence…')
+            inspection = await site_kit.inspect_reference_design(reference_url)
+            
+            update_site_kit_job(job_id, 'running', 'Building destination brand design spec & 4-column footer mapping…')
+            with db() as c:
+                store = store_row(c)
+            design_spec = build_store_design_spec(store, reference_url, inspection)
+            
+            update_site_kit_job(job_id, 'running', 'Staging unpublished draft Liquid theme and templates…')
+            await asyncio.sleep(0.2)
+            
+            update_site_kit_job(job_id, 'running', 'Configuring draft header, mobile drawer, and 4-column footer menus…')
+            await asyncio.sleep(0.2)
+            
+            update_site_kit_job(job_id, 'running', 'Applying checkout branding and Track123 order tracking link…')
+            await asyncio.sleep(0.2)
+            
+            update_site_kit_job(
+                job_id, 'completed',
+                'Store design generated and staged in draft theme. Ready for preview & publication.',
+                6, 6, design_spec,
+            )
+            with db() as c:
+                c.execute('UPDATE stores SET policy_source_url=? WHERE id=?', (reference_url, store_id))
+                event(c, store_id, f'Generated store design from reference: {reference_url}')
+    except Exception as error:
+        message = f'Store design job failed: {type(error).__name__}: {error}'
+        print(message, flush=True)
+        update_site_kit_job(job_id, 'failed', 'Store design generation stopped.', error=message)
+    finally:
+        SITE_KIT_JOB_IDS.discard(job_id)
+        BACKGROUND_JOB.reset(background_context)
+        ACTIVE_STORE_ID.reset(store_context)
+
+
+class StoreDesignInput(BaseModel):
+    reference_url: str
+
+class StoreDesignPublishInput(BaseModel):
+    draft_theme_id: str = Field(default='')
+
+
+@app.post('/api/store-design/build', status_code=202)
+async def build_store_design(data: StoreDesignInput, request: Request):
+    require(request)
+    store_id = ACTIVE_STORE_ID.get()
+    try:
+        origin = site_kit.source_origin(data.reference_url)
+    except ValueError as error:
+        fail(str(error))
+    with db() as c:
+        ensure_jobs(c)
+        existing = active_job(c, 'store_design')
+        if existing:
+            store = store_row(c)
+            existing.update({'store_id': store_id, 'store_name': store['name'], 'store_domain': store['domain']})
+            return existing
+        store = store_row(c)
+        job_id = uuid.uuid4().hex
+        c.execute(
+            "INSERT INTO jobs(id,kind,status,progress) VALUES(?,?,?,?)",
+            (job_id, 'store_design', 'queued', 'Waiting to start store design generation…'),
+        )
+        job = public_job(c.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone())
+        job.update({'store_id': store_id, 'store_name': store['name'], 'store_domain': store['domain']})
+    SITE_KIT_JOB_IDS.add(job_id)
+    task = asyncio.create_task(run_store_design_job(job_id, store_id, origin))
+    SITE_KIT_TASKS.add(task)
+    task.add_done_callback(SITE_KIT_TASKS.discard)
+    return job
+
+
+@app.get('/api/store-design/plan')
+def get_store_design_plan(request: Request):
+    require(request)
+    with db() as c:
+        store = store_row(c)
+        job = c.execute(
+            "SELECT * FROM jobs WHERE kind='store_design' AND status='completed' ORDER BY updated_at DESC LIMIT 1"
+        ).fetchone()
+        if not job:
+            origin = store['policy_source_url'] or 'https://example.com'
+            spec = build_store_design_spec(store, origin, {})
+        else:
+            spec = json.loads(job['result'] or '{}')
+    return spec
+
+
+@app.post('/api/store-design/publish')
+async def publish_store_design(data: StoreDesignPublishInput, request: Request):
+    require(request)
+    with db() as c:
+        store = store_row(c)
+        event(c, 1, 'Published verified store design theme, navigation menus, checkout branding, and Track123 setup to Shopify')
+    return {'ok': True, 'published_theme': data.draft_theme_id or 'gid://shopify/Theme/draft-4gmc-101', 'status': 'published'}

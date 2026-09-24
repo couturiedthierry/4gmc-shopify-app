@@ -112,9 +112,9 @@ async def check_workflow():
                 assert 'Example Co' in prompt
                 assert 'UNTRUSTED SOURCE TEXT' not in prompt
                 assert max_tokens == 3500
-                kind = re.search(r'Page type: ([a-z]+)', prompt).group(1)
+                kind = re.search(r'Page type: ([a-z_]+)', prompt).group(1)
                 base = ('Example Co provides clear information for customers. Contact support@example.com '
-                        'or visit example.com when you need help with an order. ')
+                        'or call +1 212 555 0100 at 123 Main St, New York, NY or visit example.com when you need help with an order. ')
                 if kind == 'shipping':
                     body = (base + 'Example Co provides free shipping in the United States. Orders are processed '
                             'within 2 business days, and delivery normally takes 3-7 business days. ') * 2
@@ -123,7 +123,7 @@ async def check_workflow():
                             'before mailing a return to receive instructions about the return method and costs. Approved refunds are explained after inspection. ') * 2
                 else:
                     body = base * 4
-                return {'title': 'Example Co ' + kind.title(), 'body': body}
+                return {'title': 'Example Co ' + kind.replace('_', ' ').title(), 'body': body}
 
             with patch.object(site_kit, 'source_origin', return_value='https://source.example'), \
                  patch.object(site_kit, 'collect_policies', examples), \
@@ -133,11 +133,11 @@ async def check_workflow():
                 response = client.post('/api/site-kit/prepare', json={'source_url': 'https://source.example'})
             assert response.status_code == 200, response.text
             plan = response.json()
-            assert len(plan['pages']) == 8
+            assert len(plan['pages']) == 11
             assert any(item['source_url'].endswith('/pages/warranty-policy') for item in plan['pages'])
             contact = next(item for item in plan['pages'] if item['kind'] == 'contact')
-            assert 'Live Chat: Available on the website during business hours' in contact['body']
-            assert 'Business Hours: Mon-Fri: 9:00 AM - 5:00 PM (Eastern Time)' in contact['body']
+            assert 'Live Chat:' in contact['body'] and 'Available on the website during business hours' in contact['body']
+            assert 'Business Hours:' in contact['body'] and 'Mon-Fri: 9:00 AM - 5:00 PM (Eastern Time)' in contact['body']
             for detail in ('Example Co', 'example.com', 'support@example.com',
                            '123 Main St, New York, NY', '+1 212 555 0100'):
                 assert detail in contact['body']
@@ -158,7 +158,7 @@ async def check_workflow():
                 response = client.post('/api/site-kit/publish', json={'fingerprint': plan['fingerprint']})
             assert response.status_code == 200, response.text
             assert response.json()['failed'] is None
-            assert len(published) == 8
+            assert len(published) == 11
             with server.db() as c:
                 rows = server.site_kit_rows(c)
                 assert all(rows[kind]['reviewed_hash'] == server.page_digest(rows[kind]) for kind in server.SITE_KIT_ORDER)

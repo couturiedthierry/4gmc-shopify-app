@@ -203,10 +203,10 @@ function products(){
  return header('Products','Build a curated private-label catalog with consistent branded photography, collections, inventory, and Google Merchant product identification.')+
  `<div class="grid two-col"><div class="grid"><section class="card"><h2>Product source website</h2><p class="sub">4GMC scans the public Shopify catalog, selects up to 50 physical products across coherent categories, and keeps one available representative variation per product.</p><form id="product-source-form" class="form-grid"><label class="full">Source website homepage<input id="product-source-url" type="url" value="${esc(source)}" placeholder="https://product-source-store.com" required></label><label class="full">Number of products to generate (1 to 50)<input id="catalog-max-products" type="number" min="1" max="50" value="${catalogMaxProducts || 20}" placeholder="20" required></label><div class="full actions"><button class="primary" ${data.store.connected&&!busy&&!catalogRunning()?'':'disabled'}>${catalogRunning()?'Catalog running…':'Build & publish catalog'}</button><button type="button" class="secondary" data-view="tasks">Task center</button></div></form><p id="catalog-progress" class="helper">${data.store.connected?'Source and destination currencies must match. Pending images use shared preview.png without external API calls.':'Connect your Shopify store before publishing products.'}</p>${result}</section><section class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div><h2 style="margin:0">Automated catalog</h2><p class="sub" style="margin:0">${data.products.length} products · ${(data.collections||[]).length} Shopify collections</p></div>${data.products.length?'<button type="button" class="secondary" data-action="reset-all-products">Re-sync catalog</button>':''}</div><div class="list">${list}</div></section></div><div class="grid"><section class="card"><h2>Automatic product rules</h2>${check('Store connected',data.store.connected,'Required for immediate publication')}${check('Store logo',Boolean(data.store.brand.logo?.digest),'Required in the corner and on realistic product surfaces')}${check('Shared preview asset',true,'Pending images use shared preview.png without external API calls')}${check('Product fidelity',true,'Construction, materials, controls, colors, and included parts are preserved')}${check('Catalog curation',true,'Configurable from 1 to 50 physical products')}${check('Inventory',true,'Exact public quantities are tracked; unknown quantities remain untracked')}${check('GMC identification',true,'GTINs are checksum-tested and never invented; private-label MPNs are stable')}${check('Source facts',true,'Unsupported claims, certifications, and accessories are blocked')}<div class="note">Pending images use the shared static asset preview.png. No image-generation API calls are made. Intended edit descriptions are displayed beside each slot so another assistant can complete the images independently.</div></section></div></div>`;
 }
-function pages(){
+ function pages(){
  const source=data.store.policy_source_url||'';
  const managed=siteKitPlan?.pages||[];
- const list=managed.length?managed.map(page=>`<details class="site-kit-document"><summary><strong>${esc(page.title)}</strong><span class="tag ${page.status==='published'?'good':''}">${esc(page.status)}</span></summary><div class="site-kit-copy">${esc(page.body)}</div></details>`).join(''):
+ const list=managed.length?managed.map(page=>`<details class="site-kit-document"><summary><strong>${esc(page.title)}</strong><span class="tag ${page.status==='published'?'good':''}">${esc(page.status)}</span></summary><div class="site-kit-copy">${page.body}</div></details>`).join(''):
   source?'<p class="sub">The reference is saved. Generate the destination-brand pages again before publishing.</p>':'<div class="empty">Enter a reference store to generate original pages for your brand.</div>';
  const result=siteKitLastRun?`<div class="note">${esc(siteKitLastRun)}${siteKitRunning()&&siteKitJob.total?` (${siteKitJob.completed}/${siteKitJob.total})`:''}</div>`:'';
  const generating=siteKitRunning();
@@ -230,7 +230,7 @@ function storefrontPreview(snapshot){
  let content='';
  if(selected==='home')content=`<div class="preview-hero"><h2>${esc(snapshot.headline)}</h2><p>${esc(snapshot.intro)}</p><button type="button" class="primary" data-preview-tab="products">Shop products</button></div><div class="preview-section"><h3>Featured products</h3>${products}</div>`;
  else if(selected==='products')content=`<div class="preview-section"><h2>Products</h2>${products}</div>`;
- else {const page=snapshot.pages.find(item=>'page-'+item.id===selected);content=`<div class="preview-section"><h2>${esc(page?.title||'Page')}</h2><div class="preview-page-copy">${esc(page?.body||'')}</div>${page?.kind==='contact'?contactDetails:''}</div>`;}
+ else {const page=snapshot.pages.find(item=>'page-'+item.id===selected);content=`<div class="preview-section"><h2>${esc(page?.title||'Page')}</h2><div class="preview-page-copy">${page?.body||''}</div>${page?.kind==='contact'?contactDetails:''}</div>`;}
  return `<div class="preview generated" style="--store-primary:${esc(brand.color)};--store-accent:${esc(brand.accent)}"><div class="preview-top">Free shipping in the United States</div><div class="preview-header"><div class="preview-store-brand">${brandTitle}</div>${domainTitle}</div><nav class="preview-nav" aria-label="Generated store pages">${nav}</nav>${content}<div class="preview-footer">${esc(snapshot.name)} · Contact: ${esc(contact.email)} · ${esc(contact.phone)}</div></div>`;
 }
 function design(){
@@ -243,11 +243,25 @@ function design(){
  const faviconPreview=faviconUrl?`<img class="brand-asset-image favicon-image" src="${esc(faviconUrl)}" alt="Current store favicon">`:'<span class="asset-empty">No favicon uploaded</span>';
  const ready=Boolean(data.storefront);
  const preview=ready?storefrontPreview(data.storefront):'<div class="preview-blank" aria-label="Storefront preview is blank until the full store is generated"></div>';
- return header('Store design','Choose the store colors and upload its logo and favicon, then generate the complete store before previewing it.')+
+ return header('Store design','Choose store branding, colors, layout, and trigger complete Shopify store design generation.')+
+ `<section class="card full store-design-hero-card" style="margin-bottom:18px;">
+  <h2>Generate & Build Store Design</h2>
+  <p class="sub">Extract reference store visual layout, build responsive Liquid theme templates, 4-column footer, native payment SVG icons, checkout branding, Track123 tracking link, and SEO proposals.</p>
+  <form id="store-design-form" class="form-grid">
+   <label class="full">Reference store for layout & structure
+    <input id="store-design-reference" type="url" value="${esc(store.policy_source_url||'')}" placeholder="https://reference-store.com" required>
+   </label>
+   <div class="full actions">
+    <button class="primary" ${!busy?'':'disabled'}>Generate & Build Store Design</button>
+    <button type="button" class="secondary" data-action="publish-store-design" ${!busy?'':'disabled'}>Publish Verified Store Design</button>
+   </div>
+  </form>
+  <p class="helper">${store.connected?'Ready to build & stage unpublished draft theme, navigation, payment icons & Track123 to Shopify.':'Ready to generate complete store design spec. Connect Shopify to publish to live store.'}</p>
+ </section>`+
  `<div class="grid two-col"><section class="card"><h2>Storefront preview</h2><p class="sub">${ready?'Generated from your saved branding, published pages, Contact details, and products.':'The preview stays blank until the complete store has been generated.'}</p>${preview}</section><div class="grid">
  <section class="card"><h2>Brand colors</h2><p class="sub">These colors are used for the generated preview and Gemini product mockups.</p><form id="design-colors-form" class="form-grid"><label>Primary color<input id="design-primary" type="color" value="${esc(color)}" required></label><label>Accent color<input id="design-accent" type="color" value="${esc(accent)}" required></label><div class="full actions"><button class="primary">Save colors</button></div></form><p class="helper">Changing colors clears the old preview until you regenerate the store and its product images.</p></section>
  <section class="card"><h2>Logo & favicon</h2><p class="sub">Upload the branding for this selected store. Replacing any file clears the preview until you regenerate it.</p><form id="brand-assets-form" class="form-grid brand-assets-form"><label class="full asset-upload-row"><span class="asset-preview" data-brand-preview="logo">${logoPreview}</span><span class="asset-upload-copy"><strong>Store logo (Light version)</strong><small>PNG, JPG, or WebP · maximum 2 MB</small><input id="design-logo" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></span></label><label class="full asset-upload-row"><span class="asset-preview" data-brand-preview="logo_dark">${logoDarkPreview}</span><span class="asset-upload-copy"><strong>Store logo (Dark version)</strong><small>PNG, JPG, or WebP · maximum 2 MB</small><input id="design-logo-dark" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></span></label><label class="full asset-upload-row"><span class="asset-preview favicon-preview" data-brand-preview="favicon">${faviconPreview}</span><span class="asset-upload-copy"><strong>Favicon</strong><small>PNG, JPG, WebP, or ICO · maximum 512 KB</small><input id="design-favicon" type="file" accept=".png,.jpg,.jpeg,.webp,.ico,image/png,image/jpeg,image/webp,image/x-icon"></span></label><div class="full actions"><button class="primary">Upload branding</button></div></form></section>
- <section class="card"><h2>Generate complete store</h2><p class="sub">Use your saved business details to create and publish the source pages, Contact page, policies, products, and images. The preview appears only after all steps finish.</p><form id="storefront-build-form" class="form-grid"><label class="full">Reference store for page structure and policy rules<input id="build-page-source" type="url" value="${esc(store.policy_source_url||'')}" placeholder="https://pages-source-store.com" required></label><label class="full">Website to copy products from<input id="build-product-source" type="url" value="${esc(store.product_source_url||'')}" placeholder="https://products-source-store.com" required></label><div class="full actions"><button class="primary" ${store.connected&&!busy?'':'disabled'}>Generate full store</button></div></form><p id="storefront-progress" class="helper">${store.connected?'Ready to generate from the two source websites.':'Connect Shopify before generating and publishing the full store.'}</p><div class="section-line"></div><p class="helper">Shopify theme-file publishing requires separate theme access from Shopify. This screen previews the generated content and branding; it does not change the live theme.</p></section></div></div>`;
+ <section class="card"><h2>Generate complete store</h2><p class="sub">Use your saved business details to create and publish the source pages, Contact page, policies, products, and images. The preview appears only after all steps finish.</p><form id="storefront-build-form" class="form-grid"><label class="full">Reference store for page structure and policy rules<input id="build-page-source" type="url" value="${esc(store.policy_source_url||'')}" placeholder="https://pages-source-store.com" required></label><label class="full">Website to copy products from<input id="build-product-source" type="url" value="${esc(store.product_source_url||'')}" placeholder="https://products-source-store.com" required></label><div class="full actions"><button class="primary" ${!busy?'':'disabled'}>Generate full store</button></div></form><p id="storefront-progress" class="helper">${store.connected?'Ready to generate from the two source websites.':'Connect Shopify before generating and publishing the full store.'}</p><div class="section-line"></div><p class="helper">Shopify theme-file publishing requires separate theme access from Shopify. This screen previews the generated content and branding; it does not change the live theme.</p></section></div></div>`;
 }
 
 function business(){
@@ -278,7 +292,40 @@ function connections(){
  `<div class="note"><strong>One Shopify app for every store.</strong><br>The Client ID and Client Secret are stored once in Render. Each store receives its own encrypted access token after you click Connect Shopify.</div>`+
  `<div class="store-cards">${storeCards}${addCard}</div>
  <div class="grid two-col connection-extras">
- <section class="card"><h2>Claude Fable 5</h2><p class="sub">Used to prepare product copy and page drafts.</p><span class="pill ${data.ai_connected?'connected':''}">${data.ai_connected?'Configured':'Not configured'}</span><p class="helper">SmartAPI · Anthropic-compatible API · claude-fable-5</p><div class="section-line"></div><h2>Image generation</h2><p class="sub">Gemini 3.1 Flash Image creates branded product mockups.</p><span class="pill ${data.image_connected?'connected':''}">${data.image_connected?'Configured':'Not configured'}</span></section>
+  <section class="card mcp-card">
+   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <h2 style="margin:0">AI &amp; ChatGPT (MCP Connection)</h2>
+    <span class="pill connected">Active</span>
+   </div>
+   <p class="sub">Connect ChatGPT or any external AI assistant directly to 4GMC via Model Context Protocol. The connected AI handles all steps: store design, pages &amp; policies text, catalog products, and images.</p>
+   
+   <form id="mcp-config-form" class="form-grid" style="margin-top:12px;">
+    <label class="full">MCP Server URL (endpoint for ChatGPT / MCP clients)
+     <div style="display:flex;gap:8px;margin-top:4px;">
+      <input id="mcp-server-url" type="text" value="${esc(data.mcp_url || (window.location.origin + '/api/mcp'))}" readonly style="background:#f8fafc;font-family:monospace;font-size:12px;">
+      <button type="button" class="secondary" data-action="copy-mcp-url" style="white-space:nowrap;">Copy URL</button>
+     </div>
+    </label>
+    <label class="full">MCP Secret Token / API Key
+     <div style="display:flex;gap:8px;margin-top:4px;">
+      <input id="mcp-token-input" type="text" value="${esc(data.mcp_token || '')}" placeholder="gmc_mcp_..." required style="font-family:monospace;font-size:12px;">
+      <button type="button" class="secondary" data-action="copy-mcp-token" style="white-space:nowrap;">Copy Token</button>
+     </div>
+    </label>
+    <div class="full actions" style="margin-top:6px;">
+     <button class="primary">Save MCP Token</button>
+     <button type="button" class="secondary" data-action="regenerate-mcp-token">Generate New Token</button>
+    </div>
+   </form>
+   
+   <div class="section-line"></div>
+   <div class="helper" style="font-size:12px;line-height:1.5;">
+    <strong>ChatGPT Connection Guide:</strong><br>
+    &bull; <strong>Endpoint:</strong> <code>${esc(data.mcp_url || (window.location.origin + '/api/mcp'))}</code><br>
+    &bull; <strong>Authentication:</strong> Bearer token header <code>Authorization: Bearer &lt;token&gt;</code> or URL parameter <code>?token=&lt;token&gt;</code><br>
+    &bull; <strong>All Steps Covered:</strong> <code>list_pages</code>, <code>update_page</code>, <code>publish_page</code>, <code>get_store_design</code>, <code>update_store_design</code>, <code>publish_store_design</code>, <code>list_products</code>, <code>update_product</code>, <code>list_pending_image_slots</code>, <code>replace_image_slot</code>
+   </div>
+  </section>
  <section class="card"><h2>Publishing for selected store</h2>${check('Shopify authorization',s.connected,'Connect '+(s.domain||'the destination store'))}${check('Pages, policies and products',s.connected,'Changes publish only to the selected store')}<p class="helper">Shopify authorization requires a public HTTPS app URL and the callback URL registered with your Shopify app.</p></section>
  ${plan}</div>`;
 }
@@ -331,6 +378,33 @@ document.body.addEventListener('click',e=>{
    case 'resync-product':if(window.confirm('Re-sync this product with Shopify? This resets its local Shopify binding and image cache so it can be cleanly updated.'))perform(async()=>{await api(`/api/products/${id}/resync`,'POST');await refresh();return 'Product re-sync complete. Click Build & publish catalog to update.';});break;
    case 'reset-all-products':if(window.confirm('Re-sync all catalog products with Shopify? This clears local Shopify bindings and image cache for all products so they can be freshly rebuilt.'))perform(async()=>{await api('/api/products/reset-all','POST');await refresh();return 'Catalog reset complete. Click Build & publish catalog to re-update all products.';});break;
   case 'review-usa':perform(async()=>{usaPlan=await api('/api/shopify/usa-plan');return 'USA setup review is ready.';});break;
+     case 'copy-mcp-url':{
+    const urlInput=$('mcp-server-url');
+    if(urlInput){
+     navigator.clipboard?.writeText(urlInput.value);
+     showToast('MCP Server URL copied to clipboard');
+    }
+    break;
+   }
+   case 'copy-mcp-token':{
+    const tokenInput=$('mcp-token-input');
+    if(tokenInput){
+     navigator.clipboard?.writeText(tokenInput.value);
+     showToast('MCP Connection Token copied to clipboard');
+    }
+    break;
+   }
+   case 'regenerate-mcp-token':{
+    if(window.confirm('Generate a new MCP authentication token? Existing ChatGPT / MCP client connections will need to be updated with the new token.')){
+     perform(async()=>{
+      const res=await api('/api/mcp/token/regenerate','POST',{});
+      data.mcp_token=res.token;
+      return 'New MCP token generated: '+res.token;
+     });
+    }
+    break;
+   }
+   case 'publish-store-design':perform(async()=>{await api('/api/store-design/publish','POST',{});return 'Published store design theme, navigation menus, payment icons, and Track123 setup to Shopify.';});break;
   case 'apply-usa':if(usaPlan&&window.confirm('Apply USA-only region markets and replace merchant shipping settings with free USA shipping? This may pause other markets and remove their current shipping rates.'))perform(async()=>{const result=await api('/api/shopify/usa-apply','POST',{fingerprint:usaPlan.fingerprint});usaPlan=null;return result.manual_steps.length?'USA market and merchant shipping verified. Check the remaining Shopify store details.':'USA market and merchant shipping verified in Shopify.';});break;
  }
 });
@@ -362,6 +436,13 @@ document.body.addEventListener('change', async e=>{
 });
 document.body.addEventListener('submit',e=>{
  const form=e.target;if(form.id==='login-form')return;if(!form.id&&!form.classList.contains('store-connection-form'))return;e.preventDefault();
+   if(form.id==='mcp-config-form')perform(async()=>{
+   const token=val('mcp-token-input');
+   await api('/api/mcp/settings','POST',{token:token});
+   data.mcp_token=token;
+   return 'MCP Connection Token saved successfully.';
+  });
+  if(form.id==='store-design-form')perform(async()=>{const refUrl=val('store-design-reference');await api('/api/store-design/build','POST',{reference_url:refUrl});return 'Started store design generation. Follow progress in Task center or preview below.';});
  if(form.id==='design-colors-form')perform(async()=>{await api('/api/store','PUT',{name:data.store.name,domain:data.store.domain,business:data.store.business,brand:{color:val('design-primary'),accent:val('design-accent')}});return 'Brand colors saved.';});
  if(form.id==='brand-assets-form')perform(async()=>{
   const logo=$('design-logo').files[0],logoDark=$('design-logo-dark').files[0],favicon=$('design-favicon').files[0];

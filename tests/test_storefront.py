@@ -98,7 +98,7 @@ with tempfile.TemporaryDirectory() as temp:
             response = client.post('/api/storefront/generate')
         assert response.status_code == 200, response.text
         snapshot = client.get('/api/state').json()['storefront']
-        assert len(snapshot['pages']) == 7 and len(snapshot['products']) == 1
+        assert len(snapshot['pages']) == 10 and len(snapshot['products']) == 1
         assert snapshot['products'][0]['image_url'] == 'https://cdn.shopify.com/ai-blue.png'
         assert any(page['kind'] == 'contact' and 'hello@example-store.com' in page['body']
                    for page in snapshot['pages'])

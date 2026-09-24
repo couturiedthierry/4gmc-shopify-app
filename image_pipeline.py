@@ -490,12 +490,123 @@ class ProductConsistencyValidator:
         }
 
 
+def create_pending_slot_records(
+    *,
+    product_id: str,
+    source_image_urls: list[str],
+    product_title: str,
+    source_title: str = "",
+    store_name: str = "Brand",
+    primary_color: str = "#2251dc",
+    accent_color: str = "#6f9cff",
+    roles: tuple[str, ...] = IMAGE_ROLES,
+    product_facts: str = "",
+    logo_ref_text: str = "",
+) -> list[dict]:
+    sku_id = str(product_id).split('/')[-1]
+    unique_urls: list[str] = []
+    seen_urls = set()
+    for url in source_image_urls:
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            unique_urls.append(url)
+    if not unique_urls:
+        unique_urls = ["/static/preview.png"]
+
+    profile = gmc_engine.create_product_image_profile(
+        product_id=sku_id,
+        source_images=unique_urls,
+        product_title=product_title,
+        source_title=source_title or product_title,
+        product_facts=product_facts,
+        primary_color=primary_color,
+        accent_color=accent_color,
+        brand_name=store_name,
+    )
+
+    role_mode_map = {"hero": "gmc_main", "detail": "gmc_additional", "lifestyle": "gmc_lifestyle", "rear": "gmc_additional"}
+    staged_items: list[dict] = []
+    logo_ref = logo_ref_text or f"Official {store_name} brand logo reference"
+
+    iterations = max(len(unique_urls), len(roles))
+    for index in range(iterations):
+        src_url = unique_urls[min(index, len(unique_urls) - 1)]
+        role = roles[index] if index < len(roles) else f"view_{index + 1}"
+        mode = role_mode_map.get(role, "gmc_main")
+
+        edit_plan = gmc_engine.create_photo_edit_plan(
+            b"", profile=profile, brand_name=store_name, target_color=primary_color, accent_color=accent_color
+        )
+        shot_prompt = gmc_engine.build_shot_prompt(
+            profile, role=role, brand_name=store_name, primary_color=primary_color, edit_plan=edit_plan
+        )
+
+        edit_description = (
+            f"Product ID: {sku_id} | Slot ID: {role}\n"
+            f"Original Source URL: {src_url}\n"
+            f"Selected Brand: {store_name}\n"
+            f"Official Logo Reference: {logo_ref}\n"
+            f"Approved Target Color: {primary_color}" + (f" (Accent: {accent_color})" if accent_color else "") + "\n"
+            f"Approved Surfaces to Edit: {edit_plan.surfaces}\n"
+            f"Supplier Logo Locations: {edit_plan.logo_locations}\n"
+            f"Protected Areas: {edit_plan.protected_areas}\n\n"
+            f"Intended Edit Instructions:\n{shot_prompt}"
+        )
+
+        out_filename = ("ai-mockup.png" if roles == ("hero",) and len(unique_urls) == 1 else f"4gmc-{role}.png")
+
+        pending_item = {
+            "product_id": sku_id,
+            "slot_id": role,
+            "image_id": f"pending_{sku_id}_{role}",
+            "role": role,
+            "src": "/static/preview.png",
+            "source_url": src_url,
+            "brand_name": store_name,
+            "logo_ref": logo_ref,
+            "edit_description": edit_description,
+            "status": "awaiting_image",
+            "gmc_mode": mode,
+            "filename": out_filename,
+            "corner_logo": True,
+            "dimensions": {"width": 2048, "height": 2048, "aspect_ratio": "1:1"},
+            "gmc_validation": {
+                "passed": False,
+                "problems": ["Product image is pending manual or AI editing (awaiting_image)."],
+                "review_status": "awaiting_image",
+            },
+            "structured_review": {
+                "decision": "awaiting_image",
+                "reasons": ["AWAITING_IMAGE: Pending image slot using static preview.png asset. Requires finished image replacement."],
+            },
+            "audit_log": {
+                "product_id": sku_id,
+                "canonical_asset_id": f"{sku_id}_{role}",
+                "generation_mode": role,
+                "image_model_calls": [],
+                "scene_model_called": False,
+                "product_model_called": False,
+                "img2img_called": False,
+                "logo_composite_called": False,
+                "product_pixels_source": "static_preview_pending",
+                "regenerated_product_pixels": False,
+                "full_prompt": shot_prompt,
+                "model_name": "zero_api_calls_pending",
+                "review_status": "awaiting_image",
+            },
+            "product_profile": profile.to_dict(),
+            "history": [],
+        }
+        staged_items.append(pending_item)
+
+    return staged_items
+
+
 async def generate_and_attach_images(
     *, gemini_key: str | list[str], shopify_domain: str, shopify_token: str, product_gid: str,
     source_image_urls: list[str], product_title: str, source_title: str, store_name: str,
-    primary_color: str = "#2251dc", accent_color: str = "#6f9cff",
-    brand_style: str = "", target_audience: str = "", product_facts: str = "",
-    logo_mime: str = "", logo_bytes: bytes | None = None,
+    primary_color: str = "#2251dc", accent_color: str = "#6f9cff", brand_style: str = "",
+    target_audience: str = "", product_facts: str = "", logo_mime: str = "", logo_bytes: bytes | None = None,
     logo_dark_mime: str = "", logo_dark_bytes: bytes | None = None,
     roles: tuple[str, ...] = IMAGE_ROLES, client: httpx.AsyncClient | None = None,
     publish: bool = True,
@@ -508,113 +619,23 @@ async def generate_and_attach_images(
         raise ImagePipelineError("The Shopify product ID is invalid.")
     if not source_image_urls:
         raise ImagePipelineError("A source product image is required.")
-    own_client = client is None
-    client = client or httpx.AsyncClient(timeout=120, follow_redirects=True, trust_env=False)
-    try:
-        # Deduplicate source image URLs preserving original order
-        unique_urls: list[str] = []
-        seen_urls = set()
-        for url in source_image_urls:
-            if url and url not in seen_urls:
-                seen_urls.add(url)
-                unique_urls.append(url)
 
-        if not unique_urls:
-            raise ImagePipelineError("No valid source product image URLs provided.")
+    sku_id = product_gid.split('/')[-1]
+    logo_ref_text = f"Official {store_name} logo reference" if (logo_bytes or logo_mime) else f"Official {store_name} brand logo"
 
-        sku_id = product_gid.split('/')[-1]
-        profile = gmc_engine.create_product_image_profile(
-            product_id=sku_id,
-            source_images=unique_urls,
-            product_title=product_title,
-            source_title=source_title,
-            product_facts=product_facts,
-            primary_color=primary_color,
-            accent_color=accent_color,
-            brand_name=store_name,
-        )
-
-        role_mode_map = {"hero": "gmc_main", "detail": "gmc_additional", "lifestyle": "gmc_lifestyle", "rear": "gmc_additional"}
-        staged_items: list[dict] = []
-
-        # Process each original source photograph slot into a pending-image record (ZERO API CALLS)
-        iterations = max(len(unique_urls), len(roles))
-        for index in range(iterations):
-            src_url = unique_urls[min(index, len(unique_urls) - 1)]
-            role = roles[index] if index < len(roles) else f"view_{index + 1}"
-            mode = role_mode_map.get(role, "gmc_main")
-
-            # Determine edit plan and prompt details for the intended edit description
-            edit_plan = gmc_engine.create_photo_edit_plan(
-                b"", profile=profile, brand_name=store_name, target_color=primary_color, accent_color=accent_color
-            )
-            shot_prompt = gmc_engine.build_shot_prompt(
-                profile, role=role, brand_name=store_name, primary_color=primary_color, edit_plan=edit_plan
-            )
-
-            logo_ref_text = f"Official {store_name} logo reference" if (logo_bytes or logo_mime) else f"Official {store_name} brand logo"
-
-            edit_description = (
-                f"Product ID: {sku_id} | Slot ID: {role}\n"
-                f"Original Source URL: {src_url}\n"
-                f"Selected Brand: {store_name}\n"
-                f"Official Logo Reference: {logo_ref_text}\n"
-                f"Approved Target Color: {primary_color}" + (f" (Accent: {accent_color})" if accent_color else "") + "\n"
-                f"Approved Surfaces to Edit: {edit_plan.surfaces}\n"
-                f"Supplier Logo Locations: {edit_plan.logo_locations}\n"
-                f"Protected Areas: {edit_plan.protected_areas}\n\n"
-                f"Intended Edit Instructions:\n{shot_prompt}"
-            )
-
-            out_filename = ("ai-mockup.png" if roles == ("hero",) and len(unique_urls) == 1 else f"4gmc-{role}.png")
-
-            pending_item = {
-                "product_id": sku_id,
-                "slot_id": role,
-                "image_id": f"pending_{sku_id}_{role}",
-                "role": role,
-                "src": "/static/preview.png",
-                "source_url": src_url,
-                "brand_name": store_name,
-                "logo_ref": logo_ref_text,
-                "edit_description": edit_description,
-                "status": "awaiting_image",
-                "gmc_mode": mode,
-                "filename": out_filename,
-                "corner_logo": True,
-                "gmc_validation": {
-                    "passed": False,
-                    "problems": ["Product image is pending manual or AI editing (awaiting_image)."],
-                    "review_status": "awaiting_image",
-                },
-                "structured_review": {
-                    "decision": "awaiting_image",
-                    "reasons": ["AWAITING_IMAGE: Pending image slot using static preview.png asset. Requires finished image replacement."],
-                },
-                "audit_log": {
-                    "product_id": sku_id,
-                    "canonical_asset_id": f"{sku_id}_{role}",
-                    "generation_mode": role,
-                    "image_model_calls": [],
-                    "scene_model_called": False,
-                    "product_model_called": False,
-                    "img2img_called": False,
-                    "logo_composite_called": False,
-                    "product_pixels_source": "static_preview_pending",
-                    "regenerated_product_pixels": False,
-                    "full_prompt": shot_prompt,
-                    "model_name": "zero_api_calls_pending",
-                    "review_status": "awaiting_image",
-                },
-                "product_profile": profile.to_dict(),
-            }
-            staged_items.append(pending_item)
-
-        # Do NOT publish preview.png to Shopify or modify live product media
-        return staged_items
-    finally:
-        if own_client:
-            await client.aclose()
+    staged_items = create_pending_slot_records(
+        product_id=sku_id,
+        source_image_urls=source_image_urls,
+        product_title=product_title,
+        source_title=source_title,
+        store_name=store_name,
+        primary_color=primary_color,
+        accent_color=accent_color,
+        roles=roles,
+        product_facts=product_facts,
+        logo_ref_text=logo_ref_text,
+    )
+    return staged_items
 
 
 

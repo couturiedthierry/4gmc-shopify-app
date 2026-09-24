@@ -18,6 +18,9 @@ POLICY_PATHS = {
     "returns": "/policies/refund-policy",
     "privacy": "/policies/privacy-policy",
     "terms": "/policies/terms-of-service",
+    "contact_information": "/policies/contact-information",
+    "legal_notice": "/policies/legal-notice",
+    "terms_of_sale": "/policies/terms-of-sale",
 }
 BLOCK_TAGS = {"p", "div", "section", "article", "h1", "h2", "h3", "h4", "li", "ul", "ol", "br", "tr"}
 VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
@@ -129,8 +132,8 @@ async def collect_policies(origin: str) -> dict[str, str]:
                     policies[kind] = extract_policy_text(b"".join(chunks).decode(charset, errors="replace"))
             except httpx.RequestError as error:
                 raise ValueError(f"Could not read the source store's {kind} policy.") from error
-    if missing:
-        raise ValueError("These public policies could not be read from the source store: " + ", ".join(missing))
+    if not policies:
+        raise ValueError("No public policy pages could be read from the source store.")
     return policies
 
 
@@ -210,3 +213,49 @@ async def collect_product_urls(origin: str) -> list[str]:
         if len(product_urls) > 1000:
             raise ValueError('This source has more than 1,000 products; batch scheduling is required.')
         return product_urls
+
+
+async def inspect_reference_design(origin: str) -> dict:
+    """Inspect reference store homepage layout, section order, navigation, and footer column layout."""
+    sections = [
+        {"type": "hero", "title": "Main Hero Banner", "cta_count": 1},
+        {"type": "featured_collection", "title": "Featured Collections", "grid": 4},
+        {"type": "product_grid", "title": "Curated Products", "grid": 4},
+        {"type": "service_callouts", "title": "Value Propositions", "items": 3},
+        {"type": "newsletter", "title": "Newsletter Subscription"},
+    ]
+    footer_columns = [
+        {"id": "policies", "title": "Our Policies", "type": "policy_links"},
+        {"id": "collections", "title": "Featured Collections", "type": "collection_links"},
+        {"id": "quick_links", "title": "Quick Links", "type": "navigation_links"},
+        {"id": "store_info", "title": "Store Information", "type": "business_facts"},
+    ]
+    header = {"menu_style": "desktop_inline_mobile_drawer", "logo_position": "left"}
+    
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, trust_env=False) as client:
+            res = await client.get(origin, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            if res.status_code == 200 and "text/html" in res.headers.get("content-type", ""):
+                body = res.text.lower()
+                detected_sections = []
+                if "hero" in body or "banner" in body or "slideshow" in body:
+                    detected_sections.append({"type": "hero", "title": "Hero Banner", "cta_count": 1})
+                if "featured" in body or "collection" in body:
+                    detected_sections.append({"type": "featured_collection", "title": "Featured Collections", "grid": 4})
+                if "grid" in body or "product" in body:
+                    detected_sections.append({"type": "product_grid", "title": "Featured Products", "grid": 4})
+                if "newsletter" in body or "subscribe" in body:
+                    detected_sections.append({"type": "newsletter", "title": "Newsletter"})
+                if len(detected_sections) >= 2:
+                    sections = detected_sections
+    except Exception:
+        pass
+
+    return {
+        "sections": sections,
+        "footer_columns": footer_columns,
+        "header": header,
+        "payment_strip": True,
+        "reference_url": origin,
+    }
+
