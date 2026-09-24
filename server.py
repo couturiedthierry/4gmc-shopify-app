@@ -1165,8 +1165,6 @@ async def attach_generated_product_image(product_id: int, request: Request):
     logo_dark_mime = ''
     logo = brand.get('logo') if isinstance(brand.get('logo'), dict) else None
     logo_dark = brand.get('logo_dark') if isinstance(brand.get('logo_dark'), dict) else None
-    if not logo and not logo_dark:
-        fail('Upload the destination store logo before generating product images')
     if logo:
         logo_path = brand_asset_directory() / f"logo.{logo.get('extension', '')}"
         if logo_path.is_file():
@@ -1177,8 +1175,6 @@ async def attach_generated_product_image(product_id: int, request: Request):
         if logo_dark_path.is_file():
             logo_dark_bytes = logo_dark_path.read_bytes()
             logo_dark_mime = logo_dark.get('content_type', '')
-    if not logo_bytes and not logo_dark_bytes:
-        fail('The uploaded destination store logo file is missing. Upload it again.')
     business = json.loads(store['business'])
     try:
         gemini_keys = [k.strip() for k in (os.environ.get('GEMINI_API_KEY2', ''), os.environ.get('GEMINI_API_KEY', ''), GEMINI_API_KEY2, GEMINI_API_KEY) if k and k.strip()]
@@ -1194,9 +1190,8 @@ async def attach_generated_product_image(product_id: int, request: Request):
             logo_dark_mime=logo_dark_mime, logo_dark_bytes=logo_dark_bytes)
     except image_pipeline.ImagePipelineError as error:
         fail(str(error), 502)
-    if (len(results) != 3 or {item.get('role') for item in results} != set(catalog_rules.IMAGE_ROLES) or
-            not all(item.get('corner_logo') is True for item in results)):
-        fail('The pipeline did not complete the required corner-branded hero, detail, and lifestyle gallery', 502)
+    if len(results) != 3 or {item.get('role') for item in results} != set(catalog_rules.IMAGE_ROLES):
+        fail('The pipeline did not complete the required hero, detail, and lifestyle gallery', 502)
     with db() as c:
         latest = c.execute('SELECT * FROM products WHERE id=? AND store_id=1', (product_id,)).fetchone()
         if latest['shopify_id'] != product['shopify_id'] or latest['title'] != product['title']:

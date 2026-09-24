@@ -772,54 +772,6 @@ def generate_background_scene(mode: str, target_size: tuple[int, int] = (1500, 1
         return bg
 
 
-def composite_product_on_scene(subject_rgba: Image.Image, scene_bg: Image.Image,
-                               mode: str = "gmc_main",
-                               logo_bytes: bytes | None = None,
-                               logo_dark_bytes: bytes | None = None) -> Image.Image:
-    """Composite extracted source product onto background scene with floor contact shadow."""
-    tw, th = scene_bg.size
-    canvas = scene_bg.convert("RGBA").copy()
-
-    # Crop tight bbox of subject
-    alpha = subject_rgba.split()[3]
-    bbox = alpha.getbbox() or (0, 0, subject_rgba.width, subject_rgba.height)
-    tight_subject = subject_rgba.crop(bbox)
-
-    sw, sh = tight_subject.size
-    # Determine target scale: gmc_main occupies 75-80% of canvas
-    target_max_w = int(tw * 0.78)
-    target_max_h = int(th * 0.78)
-    scale = min(target_max_w / max(1, sw), target_max_h / max(1, sh))
-    new_sw = max(1, int(sw * scale))
-    new_sh = max(1, int(sh * scale))
-
-    scaled_subject = tight_subject.resize((new_sw, new_sh), Image.Resampling.LANCZOS)
-
-    # Center horizontally, place on floor/center vertically
-    pos_x = (tw - new_sw) // 2
-    pos_y = (th - new_sh) // 2 if mode != "gmc_main" else (th - new_sh) // 2 + 10
-
-    # Create realistic floor contact shadow
-    shadow_w = int(new_sw * 0.95)
-    shadow_h = max(12, int(new_sh * 0.08))
-    shadow_mask = Image.new("L", (shadow_w, shadow_h), 0)
-    shadow_draw = ImageDraw.Draw(shadow_mask)
-    shadow_draw.ellipse([0, 0, shadow_w, shadow_h], fill=140)
-    shadow_mask = shadow_mask.filter(ImageFilter.GaussianBlur(radius=max(8, shadow_h // 3)))
-
-    shadow_layer = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
-    shadow_x = (tw - shadow_w) // 2
-    shadow_y = pos_y + new_sh - shadow_h // 2
-    shadow_rgba = Image.new("RGBA", (shadow_w, shadow_h), (40, 42, 45, 140))
-    shadow_rgba.putalpha(shadow_mask)
-    shadow_layer.paste(shadow_rgba, (shadow_x, shadow_y), shadow_rgba)
-
-    canvas = Image.alpha_composite(canvas, shadow_layer)
-    canvas.paste(scaled_subject, (pos_x, pos_y), scaled_subject)
-
-    # Top-left corner brand logo compositing
-    if logo_bytes or logo_dark_bytes:
-        margin_x = max(16, round(tw * 0.035))
 def _img_pixels(img: Image.Image) -> list[Any]:
     fn = getattr(img, "get_flattened_data", img.getdata)
     data = list(fn())

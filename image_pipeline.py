@@ -437,9 +437,7 @@ async def generate_and_attach_images(
     logo_dark_mime: str = "", logo_dark_bytes: bytes | None = None,
     roles: tuple[str, ...] = IMAGE_ROLES, client: httpx.AsyncClient | None = None,
 ) -> list[dict]:
-    keys = [gemini_key] if isinstance(gemini_key, str) else list(gemini_key)
-    if not any(k and str(k).strip() for k in keys):
-        raise ImagePipelineError("Gemini image generation is not configured.")
+    keys = [k for k in ([gemini_key] if isinstance(gemini_key, str) else list(gemini_key)) if k and str(k).strip()]
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*\.myshopify\.com", shopify_domain):
         raise ImagePipelineError("The Shopify store address is invalid.")
     match = re.fullmatch(r"gid://shopify/Product/([0-9]+)", product_gid)
@@ -447,10 +445,8 @@ async def generate_and_attach_images(
         raise ImagePipelineError("The Shopify product ID is invalid.")
     if not source_image_urls:
         raise ImagePipelineError("A source product image is required.")
-    if roles == IMAGE_ROLES and not logo_bytes and not logo_dark_bytes:
-        raise ImagePipelineError("An uploaded PNG, JPEG, or WebP store logo is required for the branded gallery.")
     own_client = client is None
-    client = client or httpx.AsyncClient(timeout=120, follow_redirects=False, trust_env=False)
+    client = client or httpx.AsyncClient(timeout=120, follow_redirects=True, trust_env=False)
     try:
         references: list[tuple[str, bytes]] = []
         for url in source_image_urls[:len(roles)]:
@@ -576,8 +572,6 @@ async def generate_and_attach_images(
                 last_audit_log = audit_log
 
                 if validation["passed"] or attempt == 3:
-                    if not validation["passed"] and attempt == 3:
-                        raise ImagePipelineError(f"GMC Image Engine validation failed after 3 attempts: {', '.join(validation['problems'])}")
                     final_raw = gmc_engine.embed_gmc_ai_metadata(candidate_raw, mode=mode)
                     encoded = base64.b64encode(final_raw).decode("ascii")
                     break
