@@ -255,9 +255,9 @@ def require(request: Request):
     try:
         selected = int(request.cookies.get('gmc_store_id', '1'))
     except ValueError:
-        fail('Select a valid store', 400)
+        selected = 1
     if selected < 1 or not registered_store(selected):
-        fail('Select a valid store', 400)
+        selected = 1
     ACTIVE_STORE_ID.set(selected)
     if request.method not in ('GET', 'HEAD'):
         origin = request.headers.get('origin')
@@ -271,7 +271,11 @@ def event(c, store_id, message):
 def row_json(row, fields=()):
     result = dict(row)
     for field in fields:
-        result[field] = json.loads(result[field])
+        try:
+            val = result.get(field, '')
+            result[field] = json.loads(val) if val else ([] if field in ('images', 'ai_image_manifest') else {})
+        except Exception:
+            result[field] = [] if field in ('images', 'ai_image_manifest') else {}
     for secret_field in ('shopify_token','shopify_refresh_token','shopify_expires_at','shopify_refresh_expires_at','shopify_scopes'):
         result.pop(secret_field, None)
     return result
@@ -450,8 +454,14 @@ def logout(request: Request):
 
 def issues(store, products, pages):
     findings = []
-    business = json.loads(store['business'])
-    brand = json.loads(store['brand'])
+    try:
+        business = json.loads(store['business']) if store['business'] else {}
+    except Exception:
+        business = {}
+    try:
+        brand = json.loads(store['brand']) if store['brand'] else {}
+    except Exception:
+        brand = {}
     def add(label, area, detail): findings.append({'label':label,'area':area,'detail':detail})
     if not store_connected(store): add('Connect a Shopify store', 'Connection', 'Authorize the destination store before publishing.')
     if not business.get('business_name'): add('Business name is missing', 'Business', 'Add the legal or trading name customers will see.')

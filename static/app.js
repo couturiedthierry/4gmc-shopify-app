@@ -37,7 +37,11 @@ async function api(path, method='GET', body) {
   try{response=await fetch(path,{method,credentials:'same-origin',headers:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});}
   catch{throw new Error('The connection to 4GMC was interrupted. Long tasks keep running on the server and their status will be restored automatically.');}
   const result=await response.json().catch(()=>({}));
-  if(!response.ok) throw new Error(messageText(result.detail));
+  if(!response.ok) {
+    const err = new Error(messageText(result.detail));
+    err.status = response.status;
+    throw err;
+  }
   return result;
 }
 async function refresh(){
@@ -49,7 +53,16 @@ async function refresh(){
    if(activeCatalog)watchCatalogJob(activeCatalog);
    $('login').classList.add('hidden');$('app').classList.remove('hidden');render();
   }
-  catch(error){if(error.message==='Sign in to continue'){$('login').classList.remove('hidden');$('app').classList.add('hidden');return;}throw error;}
+  catch(error){
+   if(error.status===401 || error.message==='Sign in to continue'){
+     $('login').classList.remove('hidden');$('app').classList.add('hidden');
+     return;
+   }
+   if(!data){
+     $('login').classList.remove('hidden');$('app').classList.add('hidden');
+   }
+   showToast(error?.message||error, true);
+  }
 }
 const siteKitRunning = () => ['queued','running'].includes(siteKitJob?.status);
 function watchSiteKitJob(job){
