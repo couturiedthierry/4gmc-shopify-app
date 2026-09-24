@@ -24,8 +24,10 @@ async def check_pipeline():
     def respond(request):
         calls.append(request)
         if request.method == 'GET':
-            assert request.url.host == 'cdn.example.com'
-            return httpx.Response(200, content=png, headers={'content-type': 'image/png'})
+            if request.url.host == 'cdn.example.com':
+                return httpx.Response(200, content=png, headers={'content-type': 'image/png'})
+            if request.url.host == 'merchant.myshopify.com':
+                return httpx.Response(200, json={'images': []})
         if request.url.host == 'generativelanguage.googleapis.com':
             assert request.headers['x-goog-api-key'] == 'test-gemini-key'
             body = json.loads(request.content)
@@ -58,7 +60,7 @@ async def check_pipeline():
                 client=client,
             )
     assert result['image_id'] == '456'
-    assert [call.method for call in calls] == ['GET', 'POST', 'POST']
+    assert [call.method for call in calls] == ['GET', 'GET', 'POST']
 
 
 async def check_saved_image():
@@ -136,7 +138,8 @@ async def check_saved_image():
                 response = client.post('/api/products/auto-publish',
                                        json={'url': 'https://source.example/products/item'})
             assert response.status_code == 200, response.text
-            assert order == ['copy', 'upload', 'image', 'publish']
+            assert response.json()['status'] == 'staged_preview'
+            assert order == ['copy', 'upload', 'image']
         finally:
             server.DB = old_db
 

@@ -1114,11 +1114,23 @@ async def auto_publish_source_product(data: ImportInput, request: Request):
         product = ensure_gmc_record(c, product)
         check_product_facts(product)
         c.execute('UPDATE products SET reviewed_hash=? WHERE id=?', (product_digest(product), product_id))
-        event(c, 1, f'Automatically prepared source product: {product["title"]}')
+        event(c, 1, f'Prepared source product for staging: {product["title"]}')
     await upload_product(product_id, request)
-    await attach_generated_product_image(product_id, request)
-    published = await publish_source_product(product_id, request)
-    return dict(published, id=product_id, title=product['title'])
+    attached = await attach_generated_product_image(product_id, request)
+
+    # AUTO-PUBLISHING DISABLED: Staged in PREVIEW state for explicit user review
+    with db() as c:
+        c.execute("UPDATE products SET status='draft' WHERE id=?", (product_id,))
+        event(c, 1, f'Staged product in PREVIEW state for user approval: {product["title"]}')
+
+    return {
+        'status': 'staged_preview',
+        'id': product_id,
+        'title': product['title'],
+        'images': attached.get('images', []) if isinstance(attached, dict) else [],
+        'approval_required': True,
+        'action': 'APPROVE AND REPLACE SHOPIFY PRODUCT',
+    }
 
 
 @app.post('/api/products/{product_id}/generate-image')

@@ -224,6 +224,53 @@ class ProductIdentityProfile:
 
 
 @dataclass
+class BrandedCanonicalProduct:
+    version: int = 1
+    source_product_id: str = ""
+    source_view_id: str = "front"
+    rgba_asset_path: str = ""  # Absolute path to actual approved PNG pixels on disk
+    alpha_mask_path: str = ""  # Absolute path to alpha mask PNG on disk
+    width: int = 512
+    height: int = 512
+    geometry_fingerprint: str = ""
+    logo_anchors: list[dict] = field(default_factory=list)
+    brand_config_hash: str = ""
+    approved_at: str = ""
+    status: str = "APPROVED"
+
+    def get_image(self) -> Image.Image:
+        """Reads THE ACTUAL APPROVED PRODUCT PIXELS from disk.
+
+        DO NOT RECONSTRUCT FROM PROMPTS OR EMBEDDINGS. USE THE FILE.
+        """
+        path = Path(self.rgba_asset_path)
+        if not path.is_file():
+            raise GMCImageEngineError(f"Canonical product asset file missing from disk: {path}")
+        return Image.open(path).convert("RGBA")
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class GenerationAuditLog:
+    product_id: str = ""
+    canonical_asset_id: str = ""
+    generation_mode: str = "hero"
+    image_model_calls: list[str] = field(default_factory=list)
+    scene_model_called: bool = False
+    product_model_called: bool = False
+    img2img_called: bool = False
+    logo_composite_called: bool = False
+    product_pixels_source: str = ""
+    regenerated_product_pixels: bool = False
+    validation_result: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class BrandedProductIdentity:
     version: int = 1
     identity_version: int = 1
@@ -482,6 +529,45 @@ def create_detail_crop(canonical_image: Image.Image, crop_region: str = "center"
 
     cropped = canonical_image.crop(box)
     return cropped.resize((w, h), Image.Resampling.LANCZOS)
+
+
+def create_branded_canonical_product(
+    product_id: str,
+    branded_image: Image.Image,
+    source_view_id: str = "front",
+    version: int = 1,
+    storage_dir: str | Path | None = None,
+) -> BrandedCanonicalProduct:
+    """Save approved branded canonical RGBA pixels to disk asset file and return BrandedCanonicalProduct."""
+    import time
+    canonical_dir = Path(storage_dir) if storage_dir else Path(__file__).resolve().parent / "data" / "canonical"
+    canonical_dir.mkdir(parents=True, exist_ok=True)
+
+    rgba_path = canonical_dir / f"{product_id}_{source_view_id}_v{version}.png"
+    alpha_path = canonical_dir / f"{product_id}_{source_view_id}_v{version}_alpha.png"
+
+    rgba_img = branded_image.convert("RGBA")
+    rgba_img.save(rgba_path, format="PNG")
+
+    alpha_mask = rgba_img.split()[3]
+    alpha_mask.save(alpha_path, format="PNG")
+
+    w, h = rgba_img.size
+    fingerprint = hashlib.sha256(rgba_img.tobytes()[:20000]).hexdigest()[:16]
+
+    return BrandedCanonicalProduct(
+        version=version,
+        source_product_id=product_id,
+        source_view_id=source_view_id,
+        rgba_asset_path=str(rgba_path.resolve()),
+        alpha_mask_path=str(alpha_path.resolve()),
+        width=w,
+        height=h,
+        geometry_fingerprint=fingerprint,
+        logo_anchors=[],
+        approved_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        status="APPROVED",
+    )
 
 
 
