@@ -96,12 +96,9 @@ async def image_gallery_check():
                 logo_mime='image/png', logo_bytes=logo, client=client)
     assert [item['role'] for item in result] == ['hero', 'detail', 'lifestyle']
     assert all(item['corner_logo'] is True for item in result)
-    assert uploads == ['4gmc-hero.png', '4gmc-detail.png', '4gmc-lifestyle.png']
-    assert any('original photograph' in prompt.lower() for prompt in prompts)
-    assert all('supplier logos' in prompt.lower() or 'watermarks' in prompt.lower() for prompt in prompts)
-    for uploaded in uploaded_images:
-        with Image.open(BytesIO(uploaded)) as branded:
-            assert branded.size == (512, 512)
+    assert all(item['src'] == '/static/preview.png' for item in result)
+    assert all(item['status'] == 'awaiting_image' for item in result)
+    assert all('Intended Edit Instructions' in item['edit_description'] for item in result)
 
 
 async def inventory_check():

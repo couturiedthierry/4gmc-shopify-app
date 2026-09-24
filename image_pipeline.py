@@ -519,14 +519,8 @@ async def generate_and_attach_images(
                 seen_urls.add(url)
                 unique_urls.append(url)
 
-        references: list[tuple[str, bytes]] = []
-        for url in unique_urls:
-            references.append(await _download_reference(client, url))
-
-        if not references:
-            raise ImagePipelineError("No valid source product photographs could be downloaded.")
-
-        primary_source_mime, primary_source_bytes = references[0]
+        if not unique_urls:
+            raise ImagePipelineError("No valid source product image URLs provided.")
 
         sku_id = product_gid.split('/')[-1]
         profile = gmc_engine.create_product_image_profile(
@@ -539,140 +533,84 @@ async def generate_and_attach_images(
             accent_color=accent_color,
             brand_name=store_name,
         )
-        product_identity = gmc_engine.build_product_identity(
-            primary_source_bytes, source_title=source_title, product_facts=product_facts, sku=sku_id
-        )
 
-        generator = BaseGenerator(gemini_key=gemini_key)
         role_mode_map = {"hero": "gmc_main", "detail": "gmc_additional", "lifestyle": "gmc_lifestyle", "rear": "gmc_additional"}
         staged_items: list[dict] = []
 
-        # Process each original source photograph individually 1-to-1, preserving order
-        iterations = max(len(references), len(roles))
+        # Process each original source photograph slot into a pending-image record (ZERO API CALLS)
+        iterations = max(len(unique_urls), len(roles))
         for index in range(iterations):
-            ref_mime, ref_bytes = references[min(index, len(references) - 1)]
+            src_url = unique_urls[min(index, len(unique_urls) - 1)]
             role = roles[index] if index < len(roles) else f"view_{index + 1}"
             mode = role_mode_map.get(role, "gmc_main")
 
-            # Create explicit photo edit plan identifying surfaces, target color, logo locations
+            # Determine edit plan and prompt details for the intended edit description
             edit_plan = gmc_engine.create_photo_edit_plan(
-                ref_bytes, profile=profile, brand_name=store_name, target_color=primary_color, accent_color=accent_color
+                b"", profile=profile, brand_name=store_name, target_color=primary_color, accent_color=accent_color
             )
-
-            # Build fresh prompt filling exact edit plan placeholders
             shot_prompt = gmc_engine.build_shot_prompt(
                 profile, role=role, brand_name=store_name, primary_color=primary_color, edit_plan=edit_plan
             )
 
-            ref_desc = [
-                f"Reference 1: Original Source Photo {index + 1} ({ref_mime}, {len(ref_bytes)} bytes)",
-                f"Reference 2: Official Brand Logo ({logo_mime or 'image/png'}, {len(logo_bytes or b'') if logo_bytes else 0} bytes)"
-            ]
+            logo_ref_text = f"Official {store_name} logo reference" if (logo_bytes or logo_mime) else f"Official {store_name} brand logo"
 
-            audit_log = gmc_engine.GenerationAuditLog(
-                product_id=sku_id,
-                canonical_asset_id=f"{sku_id}_v{index + 1}",
-                generation_mode=role,
-                image_model_calls=["gemini-3.1-flash-image"],
-                scene_model_called=False,
-                product_model_called=True,
-                img2img_called=True,
-                logo_composite_called=False,
-                product_pixels_source="gemini_api_direct_editing",
-                regenerated_product_pixels=False,
-                full_prompt=shot_prompt,
-                ordered_references=ref_desc,
-                model_name="gemini-3.1-flash-image",
-                review_status="STAGED_FOR_HUMAN_REVIEW",
+            edit_description = (
+                f"Product ID: {sku_id} | Slot ID: {role}\n"
+                f"Original Source URL: {src_url}\n"
+                f"Selected Brand: {store_name}\n"
+                f"Official Logo Reference: {logo_ref_text}\n"
+                f"Approved Target Color: {primary_color}" + (f" (Accent: {accent_color})" if accent_color else "") + "\n"
+                f"Approved Surfaces to Edit: {edit_plan.surfaces}\n"
+                f"Supplier Logo Locations: {edit_plan.logo_locations}\n"
+                f"Protected Areas: {edit_plan.protected_areas}\n\n"
+                f"Intended Edit Instructions:\n{shot_prompt}"
             )
 
-            candidate_raw = None
-            last_validation = None
+            out_filename = ("ai-mockup.png" if roles == ("hero",) and len(unique_urls) == 1 else f"4gmc-{role}.png")
 
-            # Execute Gemini API editing request for this specific source photo
-            try:
-                encoded_output = await generator.generate_base_png(
-                    client,
-                    prompt=shot_prompt,
-                    source_mime=ref_mime,
-                    source_bytes=ref_bytes,
-                    logo_mime=logo_mime,
-                    logo_bytes=logo_bytes,
-                    logo_dark_mime=logo_dark_mime,
-                    logo_dark_bytes=logo_dark_bytes,
-                )
-                # _add_corner_logo() IS DISABLED — no floating corner overlays appended
-                candidate_raw = base64.b64decode(encoded_output, validate=True)
-            except Exception as err:
-                # Do NOT silently substitute local compositing if Gemini fails
-                raise ImagePipelineError(f"Gemini API image editing failed for source photo {index + 1}: {err}") from err
-
-            validation = ProductConsistencyValidator.validate(ref_bytes, candidate_raw, product_identity, mode=mode)
-            review_eval = ProductConsistencyValidator.evaluate_human_review(ref_bytes, candidate_raw, profile, role=role)
-            validation.update(review_eval)
-
-            structured_review = gmc_engine.perform_structured_image_review(
-                ref_bytes, candidate_raw, profile, product_identity, role=role, logo_bytes=logo_bytes
-            )
-            validation["structured_review"] = structured_review.to_dict()
-            validation["review_status"] = structured_review.decision
-
-            out_filename = ("ai-mockup.png" if roles == ("hero",) and len(references) == 1 else f"4gmc-{role}.png")
-            digest = hashlib.sha256(candidate_raw).hexdigest()
-
-            audit_log.request = {
-                "model": "gemini-3.1-flash-image",
-                "prompt": shot_prompt,
-                "ordered_references": ref_desc,
-                "generation_config": {"responseModalities": ["IMAGE"]},
-            }
-            audit_log.response = {
-                "status_code": 200,
-                "mime_type": "image/png",
-                "candidate_count": 1,
-                "bytes_count": len(candidate_raw),
-            }
-            audit_log.output_image = {
-                "digest": digest,
-                "filename": out_filename,
+            pending_item = {
+                "product_id": sku_id,
+                "slot_id": role,
+                "image_id": f"pending_{sku_id}_{role}",
                 "role": role,
-                "size_bytes": len(candidate_raw),
-            }
-            audit_log.structured_review = structured_review.to_dict()
-            audit_log.review_status = structured_review.decision
-            audit_log.validation_result = validation
-
-            last_validation = validation
-
-            final_raw = gmc_engine.embed_gmc_ai_metadata(candidate_raw, mode=mode)
-            encoded = base64.b64encode(final_raw).decode("ascii")
-
-            staged_items.append({
-                "image_id": f"staged_{index + 1}",
-                "product_id": match.group(1),
-                "src": "",
-                "role": role,
+                "src": "/static/preview.png",
+                "source_url": src_url,
+                "brand_name": store_name,
+                "logo_ref": logo_ref_text,
+                "edit_description": edit_description,
+                "status": "awaiting_image",
                 "gmc_mode": mode,
                 "filename": out_filename,
-                "encoded": encoded,
-                "corner_logo": bool(logo_bytes or logo_dark_bytes),
-                "gmc_validation": last_validation,
-                "structured_review": structured_review.to_dict(),
-                "audit_log": audit_log.to_dict(),
+                "corner_logo": True,
+                "gmc_validation": {
+                    "passed": False,
+                    "problems": ["Product image is pending manual or AI editing (awaiting_image)."],
+                    "review_status": "awaiting_image",
+                },
+                "structured_review": {
+                    "decision": "awaiting_image",
+                    "reasons": ["AWAITING_IMAGE: Pending image slot using static preview.png asset. Requires finished image replacement."],
+                },
+                "audit_log": {
+                    "product_id": sku_id,
+                    "canonical_asset_id": f"{sku_id}_{role}",
+                    "generation_mode": role,
+                    "image_model_calls": [],
+                    "scene_model_called": False,
+                    "product_model_called": False,
+                    "img2img_called": False,
+                    "logo_composite_called": False,
+                    "product_pixels_source": "static_preview_pending",
+                    "regenerated_product_pixels": False,
+                    "full_prompt": shot_prompt,
+                    "model_name": "zero_api_calls_pending",
+                    "review_status": "awaiting_image",
+                },
                 "product_profile": profile.to_dict(),
-                "product_identity": product_identity.to_dict(),
-            })
+            }
+            staged_items.append(pending_item)
 
-        if publish:
-            return await _attach_gallery_transactional(
-                client,
-                shopify_domain=shopify_domain,
-                shopify_token=shopify_token,
-                product_id=match.group(1),
-                staged_results=staged_items,
-            )
-
-        # Return staged edited gallery directly without publishing to Shopify
+        # Do NOT publish preview.png to Shopify or modify live product media
         return staged_items
     finally:
         if own_client:

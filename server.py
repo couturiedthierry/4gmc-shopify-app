@@ -427,6 +427,10 @@ class SiteKitApplyInput(BaseModel):
 class UsaApplyInput(BaseModel):
     fingerprint: str = Field(min_length=64, max_length=64, pattern=r'^[0-9a-f]{64}$')
 
+class SlotReplaceInput(BaseModel):
+    data: str = Field(min_length=1, max_length=20_000_000)
+    content_type: str = Field(default='image/png', max_length=80)
+
 @app.get('/')
 def home():
     return FileResponse(ROOT / 'static' / 'index.html')
@@ -1301,6 +1305,76 @@ async def regenerate_product_images(product_id: int, request: Request):
             c.execute('UPDATE products SET reviewed_hash=? WHERE id=?', (product_digest(product), product_id))
         await upload_product(product_id, request)
     return await attach_generated_product_image(product_id, request)
+
+
+@app.post('/api/products/{product_id}/images/{slot_id}/replace')
+@app.post('/api/products/{product_id}/slots/{slot_id}/replace')
+async def replace_product_slot_image(product_id: int, slot_id: str, input_data: SlotReplaceInput, request: Request):
+    require(request)
+    with db() as c:
+        product = c.execute('SELECT * FROM products WHERE id=? AND store_id=1', (product_id,)).fetchone()
+        if not product:
+            fail('Product not found', 404)
+        try:
+            manifest = json.loads(product['ai_image_manifest'] or '[]')
+        except ValueError:
+            manifest = []
+
+        target_slot = None
+        for item in manifest:
+            if str(item.get('slot_id', '')).lower() == slot_id.lower() or str(item.get('role', '')).lower() == slot_id.lower():
+                target_slot = item
+                break
+
+        if not target_slot:
+            target_slot = {
+                'product_id': str(product_id),
+                'slot_id': slot_id,
+                'role': slot_id,
+                'source_url': product['source_url'],
+                'brand_name': '',
+                'logo_ref': 'Uploaded finished image',
+                'edit_description': f'Finished replacement image for slot {slot_id}.',
+                'status': 'awaiting_image',
+                'src': '/static/preview.png',
+                'corner_logo': True,
+            }
+            manifest.append(target_slot)
+
+        raw_data = input_data.data.strip()
+        if raw_data.startswith('data:'):
+            img_src = raw_data
+        elif raw_data.startswith('http://') or raw_data.startswith('https://') or raw_data.startswith('/'):
+            img_src = raw_data
+        else:
+            mime = input_data.content_type or 'image/png'
+            img_src = f"data:{mime};base64,{raw_data}"
+
+        target_slot['src'] = img_src
+        target_slot['status'] = 'approved'
+        target_slot['structured_review'] = {
+            'decision': 'approved',
+            'reasons': ['APPROVED: Slot replaced independently with finished image.'],
+        }
+        target_slot['gmc_validation'] = {
+            'passed': True,
+            'problems': [],
+            'review_status': 'approved',
+        }
+
+        hero_src = manifest[0]['src'] if manifest else img_src
+        c.execute('UPDATE products SET ai_image_url=?, ai_image_manifest=? WHERE id=?',
+                  (hero_src, json.dumps(manifest), product_id))
+        event(c, 1, f'Replaced finished image for product #{product_id} slot {slot_id}')
+
+    return {
+        'ok': True,
+        'product_id': product_id,
+        'slot_id': slot_id,
+        'status': 'approved',
+        'src': img_src,
+        'manifest': manifest,
+    }
 
 
 @app.post('/api/products/reset-all')

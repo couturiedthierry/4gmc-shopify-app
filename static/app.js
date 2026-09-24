@@ -152,18 +152,56 @@ function check(name,done,sub){return `<div class="checkrow"><span class="check-i
 function products(){
  const source=data.store.product_source_url||'';
  const result=productRun?`<div class="note">${esc(productRun)}${catalogRunning()&&catalogJob.total?` (${catalogJob.completed}/${catalogJob.total})`:''}</div>`:'';
-  const list=data.products.length?data.products.map(product=>{
-   const g=product.gmc_data||{};
-   const manifest=Array.isArray(product.ai_image_manifest)?product.ai_image_manifest:[];
-   const identifier=g.gtin?`GTIN verified`:(g.mpn?`Private-label MPN`:`Identifier needs attention`);
-   const inventory=product.inventory_tracked?`${product.inventory_quantity??0} tracked`:(g.availability==='in_stock'?'Available · quantity untracked':'Out of stock');
-   const thumbs = manifest.length ? manifest.map(img=>`<div class="product-thumb-item" data-action="preview-image" data-src="${esc(img.src)}" data-role="${esc(img.role||'preview')}" title="Click to enlarge ${esc(img.role||'AI image')}"><img src="${esc(img.src)}" alt="${esc(img.role||'AI image')}"><span class="product-thumb-badge">${esc(img.role||'image')}</span></div>`).join('') :
-    `<div class="product-thumb-empty">Hero<br>(pending)</div><div class="product-thumb-empty">Detail<br>(pending)</div><div class="product-thumb-empty">Lifestyle<br>(pending)</div>`;
-   const thumbWrap = `<div class="product-thumbs">${thumbs}</div>`;
-   return `<div class="item product-automation-item"><div><strong>${esc(product.title)}</strong><small>${esc(product.source_title)} · ${esc(product.price?product.price+' '+(data.store.business.currency||'USD'):'Price unavailable')} · ${esc(product.status)}</small><small>${esc(product.collection_title||'Featured Products')} · ${esc(identifier)} · ${esc(inventory)}</small>${thumbWrap}</div><div class="actions" style="flex-direction:column;align-items:flex-end;gap:6px;">${product.status==='published'?'<span class="tag good">Online Store</span>':''}<button type="button" class="primary" data-action="regenerate-image" data-id="${product.id}">Regenerate images</button><button type="button" class="secondary" data-action="resync-product" data-id="${product.id}">Re-sync Shopify</button></div></div>`;
-  }).join(''):'<div class="empty">No products imported yet.</div>';
+ const list=data.products.length?data.products.map(product=>{
+  const g=product.gmc_data||{};
+  const manifest=Array.isArray(product.ai_image_manifest)?product.ai_image_manifest:[];
+  const identifier=g.gtin?`GTIN verified`:(g.mpn?`Private-label MPN`:`Identifier needs attention`);
+  const inventory=product.inventory_tracked?`${product.inventory_quantity??0} tracked`:(g.availability==='in_stock'?'Available · quantity untracked':'Out of stock');
+  const slots = manifest.length ? manifest.map(img => {
+   const src = img.src || '/static/preview.png';
+   const slotId = img.slot_id || img.role || 'hero';
+   const status = img.status || 'awaiting_image';
+   const desc = img.edit_description || 'Pending product image edit instructions.';
+   return `<div class="product-slot-card">
+    <div class="product-slot-left">
+     <div class="product-thumb-item" data-action="preview-image" data-src="${esc(src)}" data-role="${esc(slotId)}" title="Click to enlarge preview">
+      <img src="${esc(src)}" alt="${esc(slotId)} preview">
+      <span class="product-thumb-badge">${esc(slotId)}</span>
+     </div>
+     <span class="slot-status-pill ${esc(status)}">${esc(status)}</span>
+    </div>
+    <div class="slot-details">
+     <div class="slot-edit-desc-title">Intended Edit Description (${esc(slotId)}):</div>
+     <div class="slot-edit-desc">${esc(desc)}</div>
+     <div class="slot-replace-row">
+      <label class="slot-replace-label">
+       <input type="file" accept="image/*" class="slot-replace-file-input" data-action="replace-slot-image" data-product-id="${product.id}" data-slot-id="${esc(slotId)}">
+       <span class="secondary button-sm">Replace Finished Image</span>
+      </label>
+     </div>
+    </div>
+   </div>`;
+  }).join('') : `<div class="product-thumb-empty" style="padding:12px;border:1px dashed var(--line);border-radius:9px;text-align:center;">Pending Product Images<br><small>Click 'Generate pending slots' to generate slot records with static preview.png.</small></div>`;
+
+  const slotWrap = `<div class="product-slots-wrap">${slots}</div>`;
+  return `<div class="item product-automation-item" style="flex-direction:column;align-items:stretch;">
+   <div style="display:flex;justify-content:space-between;align-items:flex-start;width:100%;gap:12px;">
+    <div>
+     <strong>${esc(product.title)}</strong>
+     <small>${esc(product.source_title)} · ${esc(product.price?product.price+' '+(data.store.business.currency||'USD'):'Price unavailable')} · ${esc(product.status)}</small>
+     <small>${esc(product.collection_title||'Featured Products')} · ${esc(identifier)} · ${esc(inventory)}</small>
+    </div>
+    <div class="actions" style="flex-direction:column;align-items:flex-end;gap:6px;">
+     ${product.status==='published'?'<span class="tag good">Online Store</span>':''}
+     <button type="button" class="primary" data-action="regenerate-image" data-id="${product.id}">Generate pending slots</button>
+     <button type="button" class="secondary" data-action="resync-product" data-id="${product.id}">Re-sync Shopify</button>
+    </div>
+   </div>
+   ${slotWrap}
+  </div>`;
+ }).join(''):'<div class="empty">No products imported yet.</div>';
  return header('Products','Build a curated private-label catalog with consistent branded photography, collections, inventory, and Google Merchant product identification.')+
- `<div class="grid two-col"><div class="grid"><section class="card"><h2>Product source website</h2><p class="sub">4GMC scans the public Shopify catalog, selects up to 50 physical products across coherent categories, and keeps one available representative variation per product.</p><form id="product-source-form" class="form-grid"><label class="full">Source website homepage<input id="product-source-url" type="url" value="${esc(source)}" placeholder="https://product-source-store.com" required></label><label class="full">Number of products to generate (1 to 50)<input id="catalog-max-products" type="number" min="1" max="50" value="${catalogMaxProducts || 20}" placeholder="20" required></label><div class="full actions"><button class="primary" ${data.store.connected&&!busy&&!catalogRunning()?'':'disabled'}>${catalogRunning()?'Catalog running…':'Build & publish catalog'}</button><button type="button" class="secondary" data-view="tasks">Task center</button></div></form><p id="catalog-progress" class="helper">${data.store.connected?'Source and destination currencies must match. Products publish automatically after every validation passes.':'Connect your Shopify store before publishing products.'}</p>${result}</section><section class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div><h2 style="margin:0">Automated catalog</h2><p class="sub" style="margin:0">${data.products.length} products · ${(data.collections||[]).length} Shopify collections</p></div>${data.products.length?'<button type="button" class="secondary" data-action="reset-all-products">Re-sync catalog</button>':''}</div><div class="list">${list}</div></section></div><div class="grid"><section class="card"><h2>Automatic product rules</h2>${check('Store connected',data.store.connected,'Required for immediate publication')}${check('Store logo',Boolean(data.store.brand.logo?.digest),'Required in the corner and on realistic product surfaces')}${check('Three-image gallery',data.image_connected,'Every hero, detail, and lifestyle image receives the exact corner logo')}${check('Product fidelity',true,'Construction, materials, controls, colors, and included parts are preserved')}${check('Catalog curation',true,'Configurable from 1 to 50 physical products')}${check('Inventory',true,'Exact public quantities are tracked; unknown quantities remain untracked')}${check('GMC identification',true,'GTINs are checksum-tested and never invented; private-label MPNs are stable')}${check('Source facts',true,'Unsupported claims, certifications, and accessories are blocked')}<div class="note">The exact uploaded logo is composited into the top-left corner of every generated image. Gemini may also place it on up to three physically realistic product surfaces. Source barcodes from a different brand are kept only as supplier-confirmation candidates. 4GMC does not submit them as your private-label GTIN.</div></section></div></div>`;
+ `<div class="grid two-col"><div class="grid"><section class="card"><h2>Product source website</h2><p class="sub">4GMC scans the public Shopify catalog, selects up to 50 physical products across coherent categories, and keeps one available representative variation per product.</p><form id="product-source-form" class="form-grid"><label class="full">Source website homepage<input id="product-source-url" type="url" value="${esc(source)}" placeholder="https://product-source-store.com" required></label><label class="full">Number of products to generate (1 to 50)<input id="catalog-max-products" type="number" min="1" max="50" value="${catalogMaxProducts || 20}" placeholder="20" required></label><div class="full actions"><button class="primary" ${data.store.connected&&!busy&&!catalogRunning()?'':'disabled'}>${catalogRunning()?'Catalog running…':'Build & publish catalog'}</button><button type="button" class="secondary" data-view="tasks">Task center</button></div></form><p id="catalog-progress" class="helper">${data.store.connected?'Source and destination currencies must match. Pending images use shared preview.png without external API calls.':'Connect your Shopify store before publishing products.'}</p>${result}</section><section class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div><h2 style="margin:0">Automated catalog</h2><p class="sub" style="margin:0">${data.products.length} products · ${(data.collections||[]).length} Shopify collections</p></div>${data.products.length?'<button type="button" class="secondary" data-action="reset-all-products">Re-sync catalog</button>':''}</div><div class="list">${list}</div></section></div><div class="grid"><section class="card"><h2>Automatic product rules</h2>${check('Store connected',data.store.connected,'Required for immediate publication')}${check('Store logo',Boolean(data.store.brand.logo?.digest),'Required in the corner and on realistic product surfaces')}${check('Shared preview asset',true,'Pending images use shared preview.png without external API calls')}${check('Product fidelity',true,'Construction, materials, controls, colors, and included parts are preserved')}${check('Catalog curation',true,'Configurable from 1 to 50 physical products')}${check('Inventory',true,'Exact public quantities are tracked; unknown quantities remain untracked')}${check('GMC identification',true,'GTINs are checksum-tested and never invented; private-label MPNs are stable')}${check('Source facts',true,'Unsupported claims, certifications, and accessories are blocked')}<div class="note">Pending images use the shared static asset preview.png. No image-generation API calls are made. Intended edit descriptions are displayed beside each slot so another assistant can complete the images independently.</div></section></div></div>`;
 }
 function pages(){
  const source=data.store.policy_source_url||'';
@@ -296,7 +334,23 @@ document.body.addEventListener('click',e=>{
   case 'apply-usa':if(usaPlan&&window.confirm('Apply USA-only region markets and replace merchant shipping settings with free USA shipping? This may pause other markets and remove their current shipping rates.'))perform(async()=>{const result=await api('/api/shopify/usa-apply','POST',{fingerprint:usaPlan.fingerprint});usaPlan=null;return result.manual_steps.length?'USA market and merchant shipping verified. Check the remaining Shopify store details.':'USA market and merchant shipping verified in Shopify.';});break;
  }
 });
-document.body.addEventListener('change',e=>{
+document.body.addEventListener('change', async e=>{
+ const replaceInput=e.target.closest('[data-action="replace-slot-image"]');
+ if(replaceInput && replaceInput.files?.[0]){
+  const file=replaceInput.files[0];
+  const productId=replaceInput.dataset.productId;
+  const slotId=replaceInput.dataset.slotId;
+  if(!productId || !slotId)return;
+  perform(async()=>{
+   const fileData=await readBrandFile(file);
+   await api(`/api/products/${productId}/images/${slotId}/replace`,'POST',{
+    data: fileData.data,
+    content_type: fileData.content_type,
+   });
+   return `Replaced finished image for slot ${slotId}.`;
+  });
+  return;
+ }
  const input=e.target.closest('#design-logo,#design-logo-dark,#design-favicon');
  if(!input||!input.files?.[0])return;
  const kind=input.id==='design-logo'?'logo':input.id==='design-logo-dark'?'logo_dark':'favicon';

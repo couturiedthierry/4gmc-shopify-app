@@ -59,8 +59,10 @@ async def check_pipeline():
                 primary_color='#9b1c58', accent_color='#ffc3da',
                 client=client,
             )
-    assert result['image_id'] == '456'
-    assert [call.method for call in calls] == ['GET', 'POST', 'GET', 'POST']
+    assert result['src'] == '/static/preview.png'
+    assert result['status'] == 'awaiting_image'
+    assert result['role'] == 'hero'
+    assert 'Intended Edit Instructions' in result['edit_description']
 
 
 async def check_saved_image():
