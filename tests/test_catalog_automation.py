@@ -98,8 +98,8 @@ async def image_gallery_check():
     assert all(item['corner_logo'] is True for item in result)
     assert uploads == ['4gmc-hero.png', '4gmc-detail.png', '4gmc-lifestyle.png']
     assert len(prompts) >= 1
-    assert any('background' in prompt.lower() for prompt in prompts)
-    assert all('watermark' in prompt.lower() or 'no text' in prompt.lower() for prompt in prompts)
+    assert any('photograph' in prompt.lower() or 'mower' in prompt.lower() for prompt in prompts)
+    assert all('supplier marks' in prompt.lower() or 'no other logo' in prompt.lower() or 'watermark' in prompt.lower() for prompt in prompts)
     for uploaded in uploaded_images:
         with Image.open(BytesIO(uploaded)) as branded:
             assert branded.size == (512, 512)

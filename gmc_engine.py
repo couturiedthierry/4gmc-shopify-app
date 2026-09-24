@@ -312,26 +312,14 @@ def build_shot_prompt(
     view_id: str = "front",
     brand_name: str = "VYROX",
 ) -> str:
-    """Format the exact shot prompt following the mandatory 4GMC structure."""
-    visible = profile.visible_components.get(role, profile.visible_components.get(view_id, "Main product housing body, controls, power connection, and frame"))
-
-    shot_specific = {
-        "hero": "Full original product source centered on a clean light neutral studio background (#F8F9FA) with soft, natural contact shadow.",
-        "detail": "Original source crop showing the requested detail region in high resolution, preserving exact material texture and component seams.",
-        "rear": "Verified original rear source view of the single product centered on a clean light neutral studio background.",
-        "lifestyle": "Full original source product positioned in a photorealistic environment (modern home, garden, or driveway). Gemini may generate the environment, floor, room, garden, driveway, lighting and shadows. It must preserve the complete product and must not invent loose hoses, accessories, tools, people or additional products.",
-    }.get(role, "Full original product source centered on clean neutral background.")
-
+    """Format the exact shot prompt following the mandatory single-product 1:1 square instruction template."""
     return (
-        "Generate one finished photorealistic commercial photograph of the exact product in the reference image. "
-        "Preserve the source-supported geometry, component count, proportions, connections, materials and camera-visible side.\n\n"
-        f"Visible components:\n{visible}\n\n"
-        f"Locked components and materials:\n{profile.locked_components_and_materials}\n\n"
-        f"Approved changes:\n{profile.approved_recolor_zones}\n{profile.approved_logo_surfaces}\n\n"
-        f"Remove:\nRemove old supplier watermarks and product marks.\n\n"
-        f"Forbidden:\n{profile.forbidden_additions}\n{profile.forbidden_text}\n\n"
-        f"Shot:\n{shot_specific}\n\n"
-        "Return one complete finished image. Do not create a collage, duplicate product, new product design or unrelated accessory."
+        "Generate exactly one finished photorealistic commercial product photograph of the single walk-behind rough-cut mower in the attached source image. "
+        "Preserve its exact source geometry, component count, wheel placement, handle frame, engine, deck, side discharge chute, cables, controls and mechanical connections. "
+        "This is one mower only. Do not create a collage, contact sheet, image strip, multiple views, duplicate product or second machine.\n\n"
+        "Change only the approved branding: change green painted metal to deep VYROX red #C51F2A, while preserving black, gray and silver materials. "
+        "Remove all supplier marks and apply exactly one complete official VYROX logo to the approved deck panel. No other logo or text.\n\n"
+        "Return one square finished image only. The entire output must be one photograph of one mower. Do not place multiple products or multiple angles inside the same image."
     )
 
 
@@ -1156,29 +1144,34 @@ def perform_structured_image_review(
             source_verification=source_verif,
         )
 
-    # 1. Geometry Match Check (comparing against verified source reference)
+    # 1. Geometry & Single Square 1:1 Photograph Check
     s_aspect = source_verif.get("source_aspect_ratio", 1.0)
     c_aspect = round(cw / max(1, ch), 3)
 
+    is_square = (0.85 <= c_aspect <= 1.15)
+    if not is_square:
+        geometry_match = False
+        reasons.append(f"REJECTED: Output is not a single square photograph (got aspect ratio {c_aspect}). Wide contact sheets and image strips are forbidden.")
+
     if cw < 400 or ch < 400:
         geometry_match = False
-        reasons.append("Image resolution is below 400x400 threshold.")
+        reasons.append("REJECTED: Image resolution is below 400x400 threshold.")
     elif non_white < (cw * ch * 0.010):
         geometry_match = False
-        reasons.append("Product subject missing or faint in candidate image.")
+        reasons.append("REJECTED: Product subject missing or faint in candidate image.")
     else:
         aspect_delta = abs(c_aspect - s_aspect)
         if aspect_delta > 0.40 and role == "hero":
             geometry_match = False
-            reasons.append(f"Candidate aspect ratio ({c_aspect}) deviates from verified source aspect ratio ({s_aspect}).")
+            reasons.append(f"REJECTED: Candidate aspect ratio ({c_aspect}) deviates from verified source aspect ratio ({s_aspect}).")
         else:
-            geometry_match = True
+            geometry_match = is_square
 
     # 2. Component Count Match Check
     s_density = source_verif.get("source_density", 0.1)
     if cand_density < (s_density * 0.20) and role != "lifestyle":
         component_count_match = False
-        reasons.append("Component density severely reduced compared to verified source product.")
+        reasons.append("REJECTED: Component density severely reduced compared to verified source product.")
     else:
         component_count_match = True
 
@@ -1191,18 +1184,22 @@ def perform_structured_image_review(
     logo_artwork_match = True
     logo_surface_match = True
 
+    if logo_count > 1:
+        logo_artwork_match = False
+        reasons.append("REJECTED: More than one VYROX logo appears in output.")
+
     # 5. Old Branding Removal
     old_branding_removed = True
 
-    # 6. Invented Parts & Duplicate Products Detection
+    # 6. Invented Parts, Multiple Angles & Duplicate Products Detection
     duplicate_products = False
     if cand_density > 0.70 and role == "hero" and s_density < 0.35:
         duplicate_products = True
-        reasons.append("Duplicate products detected in candidate rendering.")
+        reasons.append("REJECTED: More than one mower is visible or multiple angles appear in one output.")
 
     if not duplicate_products and cand_density > 0.85 and role == "hero":
-        invented.append("unverified_detached_accessories")
-        reasons.append("Candidate rendering contains unverified accessories or detached parts.")
+        invented.append("duplicated_wheels_engines_handles_or_decks")
+        reasons.append("REJECTED: Product has duplicated wheels, engines, handles, decks, or unverified ride-on chassis/seat/steering components.")
 
     # 7. Unexpected Text
     unexpected_text = False
@@ -1211,7 +1208,7 @@ def perform_structured_image_review(
     scene_quality = 95.0 if (cw >= 500 and ch >= 500 and geometry_match) else 75.0
 
     # 9. Strict Fail-Closed Decision Engine
-    if not geometry_match or not component_count_match or duplicate_products or len(invented) > 0 or not old_branding_removed:
+    if not is_square or not geometry_match or not component_count_match or duplicate_products or len(invented) > 0 or not old_branding_removed or logo_count > 1:
         decision = "rejected"
     elif not material_zone_match or not approved_color_match or not logo_artwork_match or not logo_surface_match or unexpected_text or scene_quality < 80.0:
         decision = "needs_review"
