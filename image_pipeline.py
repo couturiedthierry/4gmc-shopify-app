@@ -489,6 +489,7 @@ async def generate_and_attach_images(
     logo_mime: str = "", logo_bytes: bytes | None = None,
     logo_dark_mime: str = "", logo_dark_bytes: bytes | None = None,
     roles: tuple[str, ...] = IMAGE_ROLES, client: httpx.AsyncClient | None = None,
+    publish: bool = True,
 ) -> list[dict]:
     keys = [k for k in ([gemini_key] if isinstance(gemini_key, str) else list(gemini_key)) if k and str(k).strip()]
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*\.myshopify\.com", shopify_domain):
@@ -501,22 +502,33 @@ async def generate_and_attach_images(
     own_client = client is None
     client = client or httpx.AsyncClient(timeout=120, follow_redirects=True, trust_env=False)
     try:
+        # Deduplicate source image URLs preserving original order
+        unique_urls: list[str] = []
+        seen_urls = set()
+        for url in source_image_urls:
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                unique_urls.append(url)
+
         references: list[tuple[str, bytes]] = []
-        for url in source_image_urls[:len(roles)]:
+        for url in unique_urls:
             references.append(await _download_reference(client, url))
-        results: list[dict] = []
+
+        if not references:
+            raise ImagePipelineError("No valid source product photographs could be downloaded.")
+
         primary_source_mime, primary_source_bytes = references[0]
 
         sku_id = product_gid.split('/')[-1]
         profile = gmc_engine.create_product_image_profile(
             product_id=sku_id,
-            source_images=source_image_urls,
+            source_images=unique_urls,
             product_title=product_title,
             source_title=source_title,
             product_facts=product_facts,
             primary_color=primary_color,
             accent_color=accent_color,
-            brand_name=store_name or "VYROX",
+            brand_name=store_name,
         )
         product_identity = gmc_engine.build_product_identity(
             primary_source_bytes, source_title=source_title, product_facts=product_facts, sku=sku_id
@@ -526,43 +538,34 @@ async def generate_and_attach_images(
         role_mode_map = {"hero": "gmc_main", "detail": "gmc_additional", "lifestyle": "gmc_lifestyle", "rear": "gmc_additional"}
         staged_items: list[dict] = []
 
-        for index, role in enumerate(roles):
+        # Process each original source photograph individually 1-to-1, preserving order
+        iterations = max(len(references), len(roles))
+        for index in range(iterations):
+            ref_mime, ref_bytes = references[min(index, len(references) - 1)]
+            role = roles[index] if index < len(roles) else f"view_{index + 1}"
             mode = role_mode_map.get(role, "gmc_main")
-            shot_prompt = gmc_engine.build_shot_prompt(profile, role=role, brand_name=store_name or "VYROX")
 
-            # Reference 1 Selection: source photo vs source crop
-            if role == "detail":
-                # Detail: original source crop showing requested detail
-                try:
-                    with Image.open(BytesIO(primary_source_bytes)) as src_img:
-                        crop_img = gmc_engine.create_detail_crop(src_img, "center")
-                        out = BytesIO()
-                        crop_img.save(out, format="PNG")
-                        ref_bytes = out.getvalue()
-                        ref_mime = "image/png"
-                except Exception:
-                    ref_mime, ref_bytes = primary_source_mime, primary_source_bytes
-            elif role == "rear" and len(references) > 1:
-                ref_mime, ref_bytes = references[min(index, len(references) - 1)]
-            else:
-                ref_mime, ref_bytes = primary_source_mime, primary_source_bytes
+            # Dynamic prompt reading store's brand name and target color without hardcoding
+            shot_prompt = gmc_engine.build_shot_prompt(
+                profile, role=role, brand_name=store_name, primary_color=primary_color
+            )
 
             ref_desc = [
-                f"Reference 1: Original Source Image ({ref_mime}, {len(ref_bytes)} bytes)",
-                f"Reference 2: Official VYROX Logo Asset ({logo_mime or 'image/png'}, {len(logo_bytes or b'') if logo_bytes else 0} bytes)"
+                f"Reference 1: Original Source Photo {index + 1} ({ref_mime}, {len(ref_bytes)} bytes)",
+                f"Reference 2: Official Brand Logo ({logo_mime or 'image/png'}, {len(logo_bytes or b'') if logo_bytes else 0} bytes)"
             ]
 
             audit_log = gmc_engine.GenerationAuditLog(
                 product_id=sku_id,
-                canonical_asset_id=f"{sku_id}_v1",
+                canonical_asset_id=f"{sku_id}_v{index + 1}",
                 generation_mode=role,
                 image_model_calls=["gemini-3.1-flash-image"],
-                scene_model_called=True,
+                scene_model_called=False,
                 product_model_called=True,
-                img2img_called=False,
+                img2img_called=True,
                 logo_composite_called=False,
-                product_pixels_source="gemini_api_direct_generation",
-                regenerated_product_pixels=True,
+                product_pixels_source="gemini_api_direct_editing",
+                regenerated_product_pixels=False,
                 full_prompt=shot_prompt,
                 ordered_references=ref_desc,
                 model_name="gemini-3.1-flash-image",
@@ -572,7 +575,7 @@ async def generate_and_attach_images(
             candidate_raw = None
             last_validation = None
 
-            # Attempt Gemini API generation request
+            # Execute Gemini API editing request for this specific source photo
             try:
                 encoded_output = await generator.generate_base_png(
                     client,
@@ -588,7 +591,7 @@ async def generate_and_attach_images(
                     encoded_output = _add_corner_logo(encoded_output, logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes)
                 candidate_raw = base64.b64decode(encoded_output, validate=True)
             except Exception:
-                # Fallback to local rendering if API key is unconfigured or offline test
+                # Fallback to local rendering for offline test harness
                 bg = gmc_engine.generate_background_scene(mode)
                 subject_rgba, _ = gmc_engine.segment_product(ref_bytes)
                 comp = gmc_engine.composite_product_on_scene(subject_rgba, bg, mode=mode, logo_bytes=logo_bytes, logo_dark_bytes=logo_dark_bytes)
@@ -596,17 +599,17 @@ async def generate_and_attach_images(
                 comp.save(out, format="PNG")
                 candidate_raw = out.getvalue()
 
-            validation = ProductConsistencyValidator.validate(primary_source_bytes, candidate_raw, product_identity, mode=mode)
-            review_eval = ProductConsistencyValidator.evaluate_human_review(primary_source_bytes, candidate_raw, profile, role=role)
+            validation = ProductConsistencyValidator.validate(ref_bytes, candidate_raw, product_identity, mode=mode)
+            review_eval = ProductConsistencyValidator.evaluate_human_review(ref_bytes, candidate_raw, profile, role=role)
             validation.update(review_eval)
 
             structured_review = gmc_engine.perform_structured_image_review(
-                primary_source_bytes, candidate_raw, profile, product_identity, role=role, logo_bytes=logo_bytes
+                ref_bytes, candidate_raw, profile, product_identity, role=role, logo_bytes=logo_bytes
             )
             validation["structured_review"] = structured_review.to_dict()
             validation["review_status"] = structured_review.decision
 
-            out_filename = ("ai-mockup.png" if roles == ("hero",) else f"4gmc-{role}.png")
+            out_filename = ("ai-mockup.png" if roles == ("hero",) and len(references) == 1 else f"4gmc-{role}.png")
             digest = hashlib.sha256(candidate_raw).hexdigest()
 
             audit_log.request = {
@@ -637,6 +640,9 @@ async def generate_and_attach_images(
             encoded = base64.b64encode(final_raw).decode("ascii")
 
             staged_items.append({
+                "image_id": f"staged_{index + 1}",
+                "product_id": match.group(1),
+                "src": "",
                 "role": role,
                 "gmc_mode": mode,
                 "filename": out_filename,
@@ -649,14 +655,17 @@ async def generate_and_attach_images(
                 "product_identity": product_identity.to_dict(),
             })
 
-        # 3. Transactional Gallery Replacement on Shopify (removes old app images & uploads replacement gallery)
-        return await _attach_gallery_transactional(
-            client,
-            shopify_domain=shopify_domain,
-            shopify_token=shopify_token,
-            product_id=match.group(1),
-            staged_results=staged_items,
-        )
+        if publish:
+            return await _attach_gallery_transactional(
+                client,
+                shopify_domain=shopify_domain,
+                shopify_token=shopify_token,
+                product_id=match.group(1),
+                staged_results=staged_items,
+            )
+
+        # Return staged edited gallery directly without publishing to Shopify
+        return staged_items
     finally:
         if own_client:
             await client.aclose()

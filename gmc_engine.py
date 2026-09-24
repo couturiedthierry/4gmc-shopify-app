@@ -277,7 +277,7 @@ def create_product_image_profile(
     product_facts: str = "",
     primary_color: str = "#2251dc",
     accent_color: str = "#6f9cff",
-    brand_name: str = "VYROX",
+    brand_name: str = "Official Brand",
 ) -> ProductImageGenerationProfile:
     source_records = []
     for idx, url in enumerate(source_images):
@@ -285,11 +285,15 @@ def create_product_image_profile(
         view_id = "front" if idx == 0 else ("detail" if idx == 1 else "side")
         source_records.append({"url": url, "checksum": checksum, "view_id": view_id})
 
+    brand = brand_name or "Official Brand"
+    color = primary_color or "#2251dc"
+    item_name = source_title or product_title or "product"
+
     visible_comp = {
-        "hero": f"Main {source_title or product_title} housing body, primary control panel, support base, power connection, primary handles",
-        "detail": f"Close-up detail view of {source_title or product_title} control interface, material texture, housing seam and support frame",
-        "rear": f"Rear panel view of {source_title or product_title}, exhaust/intake ventilation, rear wheels, power connection and frame mount",
-        "lifestyle": f"Complete single {product_title} unit positioned cleanly in authentic commercial environment space",
+        "hero": f"Main {item_name} housing body and principal components",
+        "detail": f"Close-up detail view of {item_name} surface texture and interface",
+        "rear": f"Rear/side view of {item_name} housing and connections",
+        "lifestyle": f"Complete single {item_name} unit in photograph framing",
     }
 
     return ProductImageGenerationProfile(
@@ -298,10 +302,10 @@ def create_product_image_profile(
         available_views=["front", "detail", "rear", "side", "top"],
         visible_components=visible_comp,
         locked_components_and_materials="Preserve black, gray, silver, metal, rubber, transparent and glass areas. Preserve all original shading, surface texture, and material appearance.",
-        approved_recolor_zones=f"Change only approved brand-colored surfaces (convert supplier plastic body shell to {brand_name} brand color {primary_color}" + (f" with accent color {accent_color}" if accent_color else "") + ").",
-        official_logo_asset=f"Official {brand_name} logo asset",
-        approved_logo_surfaces=f"Replace supplier logos with the official {brand_name} logo on the main approved housing surface.",
-        forbidden_additions="Do not duplicate the product. Every image must contain exactly one product. Explicitly forbid duplicate products, duplicate wheels, duplicate handles, duplicate engines, duplicate batteries, duplicate hoses, duplicate blades, duplicate accessories and detached parts.",
+        approved_recolor_zones=f"Change only approved brand-colored surfaces (recolor principal product-color painted/plastic surfaces to {brand} target color {color}" + (f" with accent {accent_color}" if accent_color else "") + ").",
+        official_logo_asset=f"Official {brand} logo asset",
+        approved_logo_surfaces=f"Replace supplier logos with the official {brand} logo on the main approved branding surface.",
+        forbidden_additions="Do not duplicate the product. Every image must contain exactly one product. Do not create collages, image strips, multi-angle boards or extra unverified accessories.",
         forbidden_text="Remove old supplier watermarks and product marks. Do not create additional logos, badges, labels, specifications or text.",
     )
 
@@ -310,16 +314,27 @@ def build_shot_prompt(
     profile: ProductImageGenerationProfile,
     role: str = "hero",
     view_id: str = "front",
-    brand_name: str = "VYROX",
+    brand_name: str = "",
+    primary_color: str = "",
 ) -> str:
-    """Format the exact shot prompt following the mandatory single-product 1:1 square instruction template."""
+    """Format a dynamic source-image editing prompt reading the brand's configured name and target color.
+
+    Edits the attached original source photograph directly: preserves original product geometry, parts,
+    camera angle, framing, background, lighting, and locked materials. Only replaces supplier branding
+    and recolors approved principal product-color surfaces to target brand color. Never hardcodes any
+    brand, color, or product category name.
+    """
+    target_brand = brand_name or getattr(profile, "brand_name", "") or "Official Brand"
+    target_color = primary_color or getattr(profile, "primary_color", "") or "#2251dc"
+
     return (
-        "Generate exactly one finished photorealistic commercial product photograph of the single walk-behind rough-cut mower in the attached source image. "
-        "Preserve its exact source geometry, component count, wheel placement, handle frame, engine, deck, side discharge chute, cables, controls and mechanical connections. "
-        "This is one mower only. Do not create a collage, contact sheet, image strip, multiple views, duplicate product or second machine.\n\n"
-        "Change only the approved branding: change green painted metal to deep VYROX red #C51F2A, while preserving black, gray and silver materials. "
-        "Remove all supplier marks and apply exactly one complete official VYROX logo to the approved deck panel. No other logo or text.\n\n"
-        "Return one square finished image only. The entire output must be one photograph of one mower. Do not place multiple products or multiple angles inside the same image."
+        f"Generate exactly one finished photorealistic product photograph by editing the attached source image for brand {target_brand}.\n\n"
+        f"Preserve the original photograph entirely: keep the exact product, geometry, component count, camera angle, framing, background, lighting, shadows and locked materials (black, gray, silver, metal, rubber, glass).\n\n"
+        f"Apply only the configured brand changes:\n"
+        f"- Recolor approved principal product-color painted or plastic housing surfaces to target brand color {target_color}.\n"
+        f"- Remove supplier watermarks and supplier brand marks.\n"
+        f"- Apply exactly one complete official logo ({target_brand}) onto the primary product branding surface. No other logo or text.\n\n"
+        f"Return exactly one edited square product photograph. Do not invent new background scenes, do not add extra products, do not create collages or multiple views, and preserve the original source photograph's framing and angle."
     )
 
 
