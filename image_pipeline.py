@@ -165,23 +165,32 @@ async def _generate_png(client: httpx.AsyncClient, *, gemini_key: str | list[str
                                       "data": base64.b64encode(logo_dark_bytes).decode("ascii")}})
     last_status = None
     response = None
-    for key in keys:
-        try:
-            res = await client.post(
-                GEMINI_URL,
-                headers={"x-goog-api-key": key, "Content-Type": "application/json"},
-                json={"contents": [{"parts": parts}],
-                      "generationConfig": {"responseModalities": ["IMAGE"]}},
-            )
-            if res.status_code == 200:
-                response = res
-                break
-            last_status = res.status_code
-        except httpx.RequestError as error:
-            last_status = "network"
-            continue
+    attempt_logs: list[str] = []
+
+    # Bounded retry loop (max 2 retries per key)
+    for attempt in range(2):
+        for idx, key in enumerate(keys):
+            try:
+                res = await client.post(
+                    GEMINI_URL,
+                    headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+                    json={"contents": [{"parts": parts}],
+                          "generationConfig": {"responseModalities": ["IMAGE"]}},
+                )
+                if res.status_code == 200:
+                    response = res
+                    break
+                last_status = res.status_code
+                attempt_logs.append(f"Key {idx + 1} attempt {attempt + 1}: HTTP {res.status_code}")
+            except httpx.RequestError as error:
+                last_status = "network"
+                attempt_logs.append(f"Key {idx + 1} attempt {attempt + 1}: Network error ({type(error).__name__})")
+                continue
+        if response is not None and response.status_code == 200:
+            break
+
     if response is None or response.status_code != 200:
-        raise ImagePipelineError(f"Gemini image generation failed (HTTP {last_status}).")
+        raise ImagePipelineError(f"Gemini API image editing failed after bounded retries (HTTP {last_status}). Attempts: {'; '.join(attempt_logs) or 'No response'}")
     try:
         response_parts = response.json()["candidates"][0]["content"]["parts"]
         inline = next(part["inlineData"] for part in response_parts

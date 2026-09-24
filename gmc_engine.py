@@ -1235,27 +1235,29 @@ def perform_structured_image_review(
     else:
         component_count_match = True
 
-    # 3. Material Zone & Approved Color Match
-    material_zone_match = True
-    approved_color_match = True
+    # 3. Material Zone & Approved Color Match (Unmeasured attributes require human review sign-off)
+    material_zone_match = False
+    approved_color_match = False
+    reasons.append("NEEDS_REVIEW: Material zone finish and recolor accuracy require human review verification.")
 
     # 4. Logo Count, Logo Artwork & Logo Surface Match
     logo_count = 1 if logo_bytes else 0
-    logo_artwork_match = True
-    logo_surface_match = True
+    logo_artwork_match = False
+    logo_surface_match = False
+    reasons.append("NEEDS_REVIEW: Logo surface perspective, edge integration and artwork fidelity require human review verification.")
 
     if logo_count > 1:
-        logo_artwork_match = False
-        reasons.append("REJECTED: More than one VYROX logo appears in output.")
+        reasons.append("REJECTED: More than one brand logo appears in output.")
 
     # 5. Old Branding Removal
-    old_branding_removed = True
+    old_branding_removed = False
+    reasons.append("NEEDS_REVIEW: Complete supplier branding and watermark removal require human review verification.")
 
     # 6. Invented Parts, Multiple Angles & Duplicate Products Detection
     duplicate_products = False
     if cand_density > 0.70 and role == "hero" and s_density < 0.35:
         duplicate_products = True
-        reasons.append("REJECTED: More than one mower is visible or multiple angles appear in one output.")
+        reasons.append("REJECTED: More than one product is visible or multiple angles appear in one output.")
 
     if not duplicate_products and cand_density > 0.85 and role == "hero":
         invented.append("duplicated_wheels_engines_handles_or_decks")
@@ -1267,13 +1269,12 @@ def perform_structured_image_review(
     # 8. Scene Quality Score
     scene_quality = 95.0 if (cw >= 500 and ch >= 500 and geometry_match) else 75.0
 
-    # 9. Strict Fail-Closed Decision Engine
-    if not is_square or not geometry_match or not component_count_match or duplicate_products or len(invented) > 0 or not old_branding_removed or logo_count > 1:
+    # 9. Strict Fail-Closed Decision Engine (No automatic approval for unmeasured attributes)
+    if not is_square or not geometry_match or not component_count_match or duplicate_products or len(invented) > 0 or logo_count > 1:
         decision = "rejected"
-    elif not material_zone_match or not approved_color_match or not logo_artwork_match or not logo_surface_match or unexpected_text or scene_quality < 80.0:
-        decision = "needs_review"
     else:
-        decision = "approved" if (product_identity and getattr(product_identity, "sku", "")) else "needs_review"
+        # All unmeasured attributes default strictly to needs_review, never automatic approval
+        decision = "needs_review"
 
     return StructuredImageReview(
         geometry_match=geometry_match,
