@@ -54,7 +54,10 @@ app = FastAPI(title='4GMC', docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=ROOT / 'static'), name='static')
 
 import mcp_server
+import mcp_oauth
 app.include_router(mcp_server.router)
+app.include_router(mcp_oauth.router)
+
 
 
 @app.middleware('http')
@@ -830,9 +833,33 @@ def state(request: Request):
         product.pop('reviewed_hash', None)
     for page in pages:
         page['reviewed'] = page['reviewed_hash'] == page_digest(page) and bool(page['reviewed_hash'])
-    mcp_tok = mcp_server.get_mcp_token()
     mcp_endpoint = f"{PUBLIC_URL.rstrip('/')}/api/mcp" if PUBLIC_URL else "/api/mcp"
-    return {'store':public_store,'stores':registered,'active_store_id':selected_id,'products':products,'collections':collections,'pages':pages,'events':events,'storefront':storefront,'site_kit_job':site_kit_job,'jobs':all_store_jobs(),'task_capacity':task_capacity_value(),'findings':issues(store,products,pages),'ai_connected':bool(GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY),'shopify_ready':bool(client_id and client_secret and FERNET and PUBLIC_URL.startswith('https://')),'image_connected':bool(GEMINI_API_KEY or GEMINI_API_KEY2),'gmc_connected':False,'mcp_token':mcp_tok,'mcp_url':mcp_endpoint,'mcp_connected':True}
+    mcp_legacy_enabled = mcp_oauth.is_legacy_token_enabled()
+    return {
+        'store': public_store,
+        'stores': registered,
+        'active_store_id': selected_id,
+        'products': products,
+        'collections': collections,
+        'pages': pages,
+        'events': events,
+        'storefront': storefront,
+        'site_kit_job': site_kit_job,
+        'jobs': all_store_jobs(),
+        'task_capacity': task_capacity_value(),
+        'findings': issues(store, products, pages),
+        'ai_connected': bool(GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY),
+        'shopify_ready': bool(client_id and client_secret and FERNET and PUBLIC_URL.startswith('https://')),
+        'image_connected': bool(GEMINI_API_KEY or GEMINI_API_KEY2),
+        'gmc_connected': False,
+        'mcp_url': mcp_endpoint,
+        'mcp_connected': True,
+        'mcp_oauth_enabled': True,
+        'mcp_auth_server': mcp_oauth.get_auth_server_url(),
+        'mcp_legacy_enabled': mcp_legacy_enabled,
+        'mcp_token': '••••••••••••' if mcp_legacy_enabled else '',
+    }
+
 
 @app.put('/api/store')
 async def update_store(data: StoreUpdate, request: Request):

@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse
 from PIL import Image
 
 import image_pipeline
+import mcp_oauth
 
 router = APIRouter()
 
@@ -36,27 +37,37 @@ ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def get_mcp_token() -> str:
-    """Retrieve or initialize static MCP API authentication token."""
-    token = os.environ.get("MCP_TOKEN") or os.environ.get("GMC_MCP_TOKEN")
-    if token and token.strip():
-        return token.strip()
+    """
+    Retrieve valid MCP authentication token.
+    If legacy token mode is enabled, returns or initializes the legacy token.
+    Otherwise returns a valid signed OAuth 2.1 RS256 JWT access token.
+    """
+    if mcp_oauth.is_legacy_token_enabled():
+        token = os.environ.get("MCP_TOKEN") or os.environ.get("GMC_MCP_TOKEN")
+        if token and token.strip():
+            mcp_oauth.set_legacy_token(token.strip())
+            return token.strip()
 
-    import server
-    server.ensure_registry()
-    with server.registry() as c:
-        row = c.execute("SELECT value FROM app_settings WHERE key='mcp_api_token'").fetchone()
-        if row and row["value"]:
-            return row["value"]
-        new_token = f"gmc_mcp_{secrets.token_hex(16)}"
-        c.execute("INSERT OR REPLACE INTO app_settings(key,value) VALUES('mcp_api_token', ?)", (new_token,))
-        return new_token
+        import server
+        server.ensure_registry()
+        with server.registry() as c:
+            row = c.execute("SELECT value FROM app_settings WHERE key='mcp_api_token'").fetchone()
+            if row and row["value"]:
+                return row["value"]
+            new_token = f"gmc_mcp_{secrets.token_hex(16)}"
+            mcp_oauth.set_legacy_token(new_token)
+            c.execute("INSERT OR REPLACE INTO app_settings(key,value) VALUES('mcp_api_token', ?)", (new_token,))
+            return new_token
+
+    return mcp_oauth.create_access_token(store_id=1, scopes=mcp_oauth.ALL_SCOPES)
 
 
 def set_mcp_token(token: str) -> str:
-    """Update static MCP API authentication token."""
+    """Update static MCP API authentication token for legacy compatibility."""
     token = (token or "").strip()
     if not token:
         raise ValueError("MCP Token cannot be empty")
+    mcp_oauth.set_legacy_token(token)
     import server
     server.ensure_registry()
     with server.registry() as c:
@@ -65,10 +76,11 @@ def set_mcp_token(token: str) -> str:
 
 
 def regenerate_mcp_token() -> str:
-    """Generate and store a new secure MCP API authentication token."""
+    """Generate and store a new secure MCP API authentication token for legacy compatibility."""
     import server
     server.ensure_registry()
     new_token = f"gmc_mcp_{secrets.token_hex(16)}"
+    mcp_oauth.set_legacy_token(new_token)
     with server.registry() as c:
         c.execute("INSERT OR REPLACE INTO app_settings(key,value) VALUES('mcp_api_token', ?)", (new_token,))
     return new_token
@@ -104,62 +116,29 @@ def verify_signed_upload_token(signed_token: str) -> tuple[bool, int]:
     return False, 1
 
 
-def authenticate_mcp_request(request: Request) -> int:
+def authenticate_mcp_request(
+    request: Request,
+    required_scope: Optional[str] = None,
+    target_store_id: Optional[int] = None,
+) -> int:
     """
-    Authenticate incoming MCP API request via Bearer token, query token, header, or session.
-    Scopes ACTIVE_STORE_ID and returns authorized store ID.
-    Raises 401 Unauthorized if authentication fails.
+    Authenticate incoming MCP API request via OAuth 2.1 or legacy bearer token.
+    Scopes server.ACTIVE_STORE_ID and returns authorized store ID.
+    Raises 401 Unauthorized with WWW-Authenticate challenge pointing to protected resource metadata.
     """
-    import server
-    mcp_token = get_mcp_token()
-
-    auth_header = request.headers.get("Authorization", "")
-    token = ""
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:].strip()
-
-    if not token:
-        token = request.headers.get("X-MCP-Token", "").strip()
-
-    if not token:
-        token = request.query_params.get("token", "").strip() or request.query_params.get("api_key", "").strip()
-
     signed_token = request.query_params.get("signed_token", "").strip()
     if signed_token:
         valid_signed, signed_store_id = verify_signed_upload_token(signed_token)
         if valid_signed:
+            import server
             server.ACTIVE_STORE_ID.set(signed_store_id)
             return signed_store_id
 
-    try:
-        store_id = int(request.query_params.get("store_id", "1") or request.headers.get("X-Store-ID", "1"))
-    except ValueError:
-        store_id = 1
+    ctx = mcp_oauth.authenticate_mcp_request(
+        request, required_scope=required_scope, target_store_id=target_store_id
+    )
+    return ctx.store_id
 
-    valid = False
-    if token and (token == mcp_token or token == server.ADMIN_PASSWORD):
-        valid = True
-    elif request.cookies.get("gmc_session"):
-        try:
-            cookie = request.cookies.get("gmc_session", "")
-            stamp, signature = cookie.split(".", 1)
-            expected = hmac.new(server.SESSION_SECRET.encode(), stamp.encode(), hashlib.sha256).hexdigest()
-            if hmac.compare_digest(signature, expected) and int(stamp) >= time.time():
-                valid = True
-        except Exception:
-            pass
-
-    if not valid:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized: Valid MCP authentication token (Bearer or ?token=) required.",
-        )
-
-    if not server.registered_store(store_id):
-        store_id = 1
-
-    server.ACTIVE_STORE_ID.set(store_id)
-    return store_id
 
 
 def ensure_product_pending_slots(c: Any, product: dict, store: dict) -> list[dict]:
@@ -864,13 +843,45 @@ def update_store_details(
         return {"ok": True, "store_id": store_id, "business": cur_biz, "brand": cur_brand}
 
 
-async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
-    """Handle standard JSON-RPC 2.0 requests for MCP clients."""
+def get_profile(store_id: int, user_id: str = "admin") -> Dict[str, Any]:
+    """Get authenticated 4GMC merchant profile and store workspace details."""
+    import server
+    server.ACTIVE_STORE_ID.set(store_id)
+    with server.db() as c:
+        row = c.execute("SELECT * FROM stores WHERE id=?", (store_id,)).fetchone()
+        store = dict(row) if row else {"id": store_id, "name": "4GMC Store", "domain": ""}
+        biz = json.loads(store.get("business") or "{}")
+        return {
+            "account_id": user_id,
+            "store_id": store_id,
+            "store_name": store.get("name", "4GMC Store"),
+            "store_domain": store.get("domain", ""),
+            "business_name": biz.get("business_name", store.get("name", "")),
+            "connected": server.store_connected(store),
+            "mcp_auth": "oauth_2.1",
+        }
+
+
+async def handle_jsonrpc_request(
+    body: dict,
+    store_id: Optional[int] = None,
+    token_ctx: Optional[mcp_oauth.TokenContext] = None,
+) -> dict:
+    """Handle standard JSON-RPC 2.0 requests for MCP clients with tool safety annotations and scope validation."""
     req_id = body.get("id")
     method = body.get("method", "")
     params = body.get("params", {})
 
+    effective_ctx = token_ctx or mcp_oauth.TokenContext(
+        store_id=store_id or 1,
+        scopes=set(mcp_oauth.ALL_SCOPES),
+        user_id="admin",
+        client_id="chatgpt",
+        auth_method="oauth",
+    )
+
     if method == "initialize":
+
         return {
             "jsonrpc": "2.0",
             "id": req_id,
@@ -893,6 +904,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "list_pending_image_slots",
                 "description": "List all pending image slots for products in the authorized store with status, intended edit description, and dimensions.",
+                "readOnlyHint": True,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -905,6 +917,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "get_image_slot_sources",
                 "description": "Get downloadable original product photos, official brand logo reference, color instructions, and edit requirements for a specific slot.",
+                "readOnlyHint": True,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -918,6 +931,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "upload_image_asset",
                 "description": "Upload a finished image file (base64 payload) to 4GMC and receive a unique asset_id for assignment.",
+                "readOnlyHint": False,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -931,6 +945,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "replace_image_slot",
                 "description": "Assign an uploaded image asset (by asset_id or image_data) to one exact product image slot and set status to ready_for_review.",
+                "readOnlyHint": False,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -946,6 +961,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "list_pages",
                 "description": "List all brand pages and policies (About Us, Contact Us, FAQ, Shipping Policy, Refund Policy, Privacy, Terms, Legal Notice, Terms of Sale, Contact Information) in the authorized store with IDs, titles, kinds, and status.",
+                "readOnlyHint": True,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -956,6 +972,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "get_page",
                 "description": "Get complete content, semantic HTML, and metadata for a specific page or policy by page_id or kind.",
+                "readOnlyHint": True,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -968,6 +985,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "update_page",
                 "description": "Update or create brand page or policy content. Automatically applies semantic HTML headings (h1, h2, h3), bold operational labels, mailto/tel links, and contextual store links using real destination facts. Sets status to ready_for_review.",
+                "readOnlyHint": False,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -984,6 +1002,8 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "publish_page",
                 "description": "Publish a reviewed brand page or policy directly to Shopify (updating the online store page or Shopify shop policy).",
+                "readOnlyHint": False,
+                "destructiveHint": True,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -996,6 +1016,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "get_store_design",
                 "description": "Retrieve store design specification, brand colors (primary, accent), typography, navigation menus, 4-column footer, native payment SVG icons, Track123 setup, and review status.",
+                "readOnlyHint": True,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -1006,6 +1027,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "update_store_design",
                 "description": "Update store visual branding colors, design specification, navigation structure, or theme settings.",
+                "readOnlyHint": False,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -1019,6 +1041,8 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "publish_store_design",
                 "description": "Publish store design theme, navigation menus, payment icons, and Track123 setup to Shopify.",
+                "readOnlyHint": False,
+                "destructiveHint": True,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -1030,6 +1054,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "list_products",
                 "description": "List catalog products in the authorized store with pricing, status, vendor, and images.",
+                "readOnlyHint": True,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -1041,6 +1066,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "get_product",
                 "description": "Get complete product details including source data and pending image slot manifest.",
+                "readOnlyHint": True,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -1053,6 +1079,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "update_product",
                 "description": "Update product title, description, or price.",
+                "readOnlyHint": False,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -1068,6 +1095,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "get_store_details",
                 "description": "Get active store name, domain, connection status, business facts (email, phone, address, currency, country, niche), and brand settings.",
+                "readOnlyHint": True,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -1078,6 +1106,7 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
             {
                 "name": "update_store_details",
                 "description": "Update store business facts (email, phone, address, currency, country, niche) or brand colors.",
+                "readOnlyHint": False,
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -1087,6 +1116,17 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
                     },
                 },
             },
+            {
+                "name": "get_profile",
+                "description": "Get authenticated 4GMC merchant profile and store workspace details.",
+                "readOnlyHint": True,
+                "_meta": {"openai/profile": True},
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+
         ]
         return {
             "jsonrpc": "2.0",
@@ -1097,7 +1137,36 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
     if method == "tools/call":
         tool_name = params.get("name")
         args = params.get("arguments", {})
-        sid = args.get("store_id") or store_id
+
+        # Scope enforcement
+        req_scope = mcp_oauth.TOOL_SCOPES.get(tool_name)
+        if req_scope and req_scope not in effective_ctx.scopes:
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {
+                    "code": -32003,
+                    "message": f"Forbidden: Insufficient scope. Tool '{tool_name}' requires '{req_scope}'.",
+                },
+            }
+
+        # Workspace isolation
+        arg_store_id = args.get("store_id")
+        if arg_store_id is not None:
+            try:
+                if int(arg_store_id) != effective_ctx.store_id:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": {
+                            "code": -32003,
+                            "message": f"Forbidden: Cross-store access denied. Token is bound to store #{effective_ctx.store_id}.",
+                        },
+                    }
+            except (ValueError, TypeError):
+                pass
+
+        sid = effective_ctx.store_id
 
         try:
             if tool_name == "list_pending_image_slots":
@@ -1172,6 +1241,8 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
                     business=args.get("business"),
                     brand=args.get("brand"),
                 )
+            elif tool_name == "get_profile":
+                res = get_profile(store_id=int(sid), user_id=effective_ctx.user_id)
             else:
                 return {
                     "jsonrpc": "2.0",
@@ -1209,30 +1280,33 @@ async def handle_jsonrpc_request(body: dict, store_id: int) -> dict:
 @router.post("/mcp")
 async def mcp_jsonrpc_endpoint(request: Request):
     """Main authenticated JSON-RPC 2.0 MCP endpoint."""
-    store_id = authenticate_mcp_request(request)
+    ctx = mcp_oauth.authenticate_mcp_request(request)
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
-    res = await handle_jsonrpc_request(body, store_id)
+    res = await handle_jsonrpc_request(body, store_id=ctx.store_id, token_ctx=ctx)
     return JSONResponse(res)
+
 
 
 @router.get("/api/mcp/info")
 async def mcp_info_endpoint(request: Request):
     """Get MCP connection information, authentication setup, and available capabilities."""
     store_id = authenticate_mcp_request(request)
-    token = get_mcp_token()
+    public_url = mcp_oauth.get_public_url()
     return {
         "ok": True,
         "mcp_server": "4GMC Product Image Slot MCP Server",
         "connection_url": "/api/mcp",
         "authenticated_store_id": store_id,
         "auth_setup": {
-            "token": token,
-            "header": f"Authorization: Bearer {token}",
-            "query_param": f"?token={token}",
+            "type": "oauth_2.1",
+            "protected_resource_metadata": f"{public_url}/.well-known/oauth-protected-resource",
+            "authorization_server": mcp_oauth.get_auth_server_url(),
+            "jwks_uri": mcp_oauth.get_jwks_url(),
+            "scopes": mcp_oauth.ALL_SCOPES,
         },
         "capabilities": [
             "list_pending_image_slots",
@@ -1251,6 +1325,7 @@ async def mcp_info_endpoint(request: Request):
             "update_product",
             "get_store_details",
             "update_store_details",
+            "get_profile",
         ],
     }
 
@@ -1260,14 +1335,19 @@ async def mcp_settings_get(request: Request):
     """Get current MCP connection configuration."""
     store_id = authenticate_mcp_request(request)
     token = get_mcp_token()
-    import server
-    endpoint = f"{server.PUBLIC_URL.rstrip('/')}/api/mcp" if server.PUBLIC_URL else "/api/mcp"
+    public_url = mcp_oauth.get_public_url()
+    endpoint = f"{public_url}/api/mcp"
+    legacy_enabled = mcp_oauth.is_legacy_token_enabled()
     return {
         "ok": True,
         "token": token,
         "url": endpoint,
         "server_name": "4GMC Unified MCP Server",
         "store_id": store_id,
+        "oauth_status": "active",
+        "protected_resource_metadata": f"{public_url}/.well-known/oauth-protected-resource",
+        "authorization_server": mcp_oauth.get_auth_server_url(),
+        "legacy_enabled": legacy_enabled,
         "capabilities": [
             "list_pending_image_slots",
             "get_image_slot_sources",
@@ -1285,6 +1365,7 @@ async def mcp_settings_get(request: Request):
             "update_product",
             "get_store_details",
             "update_store_details",
+            "get_profile",
         ],
     }
 
@@ -1312,8 +1393,7 @@ async def mcp_token_regenerate(request: Request):
 @router.get("/api/mcp/openapi.json")
 async def mcp_openapi_spec(request: Request):
     """OpenAPI 3.1.0 specification for ChatGPT Custom Actions."""
-    import server
-    base_url = server.PUBLIC_URL.rstrip("/") if server.PUBLIC_URL else ""
+    base_url = mcp_oauth.get_public_url()
     return {
         "openapi": "3.1.0",
         "info": {
@@ -1351,14 +1431,26 @@ async def mcp_openapi_spec(request: Request):
         },
         "components": {
             "securitySchemes": {
+                "oauth2": {
+                    "type": "oauth2",
+                    "description": "OAuth 2.1 Authorization Code Flow with PKCE S256",
+                    "flows": {
+                        "authorizationCode": {
+                            "authorizationUrl": f"{base_url}/oauth/authorize",
+                            "tokenUrl": f"{base_url}/oauth/token",
+                            "scopes": {s: f"Access {s}" for s in mcp_oauth.ALL_SCOPES},
+                        }
+                    }
+                },
                 "bearerAuth": {
                     "type": "http",
                     "scheme": "bearer"
                 }
             }
         },
-        "security": [{"bearerAuth": []}]
+        "security": [{"oauth2": []}, {"bearerAuth": []}]
     }
+
 
 
 @router.post("/api/mcp/upload")

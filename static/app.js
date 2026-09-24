@@ -295,37 +295,67 @@ function connections(){
   <section class="card mcp-card">
    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
     <h2 style="margin:0">AI &amp; ChatGPT (MCP Connection)</h2>
-    <span class="pill connected">Active</span>
+    <span class="pill connected">OAuth 2.1 Active</span>
    </div>
-   <p class="sub">Connect ChatGPT or any external AI assistant directly to 4GMC via Model Context Protocol. The connected AI handles all steps: store design, pages &amp; policies text, catalog products, and images.</p>
+   <p class="sub">Connect ChatGPT Developer Mode directly to 4GMC via the Model Context Protocol (MCP OAuth 2.1). ChatGPT dynamically discovers protected resource metadata, initiates the PKCE authorization flow, and securely interacts with your store after administrator approval.</p>
    
-   <form id="mcp-config-form" class="form-grid" style="margin-top:12px;">
-    <label class="full">MCP Server URL (endpoint for ChatGPT / MCP clients)
+   <div class="form-grid" style="margin-top:14px;">
+    <label class="full">MCP Resource Endpoint (Server URL)
      <div style="display:flex;gap:8px;margin-top:4px;">
       <input id="mcp-server-url" type="text" value="${esc(data.mcp_url || (window.location.origin + '/api/mcp'))}" readonly style="background:#f8fafc;font-family:monospace;font-size:12px;">
       <button type="button" class="secondary" data-action="copy-mcp-url" style="white-space:nowrap;">Copy URL</button>
      </div>
     </label>
-    <label class="full">MCP Secret Token / API Key
-     <div style="display:flex;gap:8px;margin-top:4px;">
-      <input id="mcp-token-input" type="text" value="${esc(data.mcp_token || '')}" placeholder="gmc_mcp_..." required style="font-family:monospace;font-size:12px;">
-      <button type="button" class="secondary" data-action="copy-mcp-token" style="white-space:nowrap;">Copy Token</button>
+
+    <div class="full" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:6px;">
+     <div style="background:#f8fafc;border:1px solid #e2e8f0;padding:10px 14px;border-radius:6px;">
+      <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;">Protocol &amp; Auth</div>
+      <div style="font-size:13px;font-weight:600;color:#0f172a;margin-top:2px;">MCP OAuth 2.1 (PKCE S256)</div>
      </div>
-    </label>
-    <div class="full actions" style="margin-top:6px;">
-     <button class="primary">Save MCP Token</button>
-     <button type="button" class="secondary" data-action="regenerate-mcp-token">Generate New Token</button>
+     <div style="background:#f8fafc;border:1px solid #e2e8f0;padding:10px 14px;border-radius:6px;">
+      <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;">Identity Provider</div>
+      <div style="font-size:13px;font-weight:600;color:#0f172a;margin-top:2px;">${(data.mcp_auth_server||'').includes('auth0') ? 'Auth0 IdP' : '4GMC Native AS'}</div>
+     </div>
+     <div style="background:#f8fafc;border:1px solid #e2e8f0;padding:10px 14px;border-radius:6px;">
+      <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;">Protected Resource Discovery</div>
+      <div style="font-size:12px;font-family:monospace;color:#2563eb;margin-top:2px;">/.well-known/oauth-protected-resource</div>
+     </div>
     </div>
-   </form>
-   
-   <div class="section-line"></div>
-   <div class="helper" style="font-size:12px;line-height:1.5;">
-    <strong>ChatGPT Connection Guide:</strong><br>
-    &bull; <strong>Endpoint:</strong> <code>${esc(data.mcp_url || (window.location.origin + '/api/mcp'))}</code><br>
-    &bull; <strong>Authentication:</strong> Bearer token header <code>Authorization: Bearer &lt;token&gt;</code> or URL parameter <code>?token=&lt;token&gt;</code><br>
-    &bull; <strong>All Steps Covered:</strong> <code>list_pages</code>, <code>update_page</code>, <code>publish_page</code>, <code>get_store_design</code>, <code>update_store_design</code>, <code>publish_store_design</code>, <code>list_products</code>, <code>update_product</code>, <code>list_pending_image_slots</code>, <code>replace_image_slot</code>
    </div>
+
+   <div class="helper" style="font-size:12px;line-height:1.6;margin-top:16px;background:#f0fdf4;border:1px solid #bbf7d0;padding:14px;border-radius:8px;">
+    <strong style="color:#166534;font-size:13px;">ChatGPT Developer Mode Connection Steps:</strong><br>
+    1. In ChatGPT, open <strong>Settings &gt; Developer Mode / Connectors</strong> (or Custom GPT Actions).<br>
+    2. Add your MCP Server URL: <code>${esc(data.mcp_url || (window.location.origin + '/api/mcp'))}</code><br>
+    3. ChatGPT performs RFC 9728 discovery and prompts you to sign in with your 4GMC administrator credentials.<br>
+    4. Review and grant permissions on the consent screen to link your store workspace.<br>
+    5. ChatGPT can then call the 16 4GMC MCP tools (pages &amp; policies, store design, products, and images).
+   </div>
+
+   <div style="background:#fef2f2;border:1px solid #fecaca;padding:10px 14px;border-radius:6px;font-size:12px;color:#991b1b;margin-top:12px;">
+    🔒 <strong>Security Warning:</strong> Never share, screenshot, or post OAuth access tokens, authorization codes, or secret keys in chat windows or public forums. Tokens granting write access can modify your live Shopify store.
+   </div>
+
+   ${data.mcp_legacy_enabled ? `
+   <div style="margin-top:18px;border-top:1px dashed #cbd5e1;padding-top:14px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+     <strong style="font-size:13px;color:#475569;">Codex Desktop Compatibility (Legacy Static Token)</strong>
+     <span class="pill" style="background:#fef3c7;color:#92400e;">Legacy Mode Enabled</span>
+    </div>
+    <p class="sub" style="margin:0 0 10px;font-size:12px;">Only for local Codex CLI/Desktop clients requiring <code>--bearer-token-env-var</code>. Saved tokens are stored as salted SHA-256 hashes and never displayed again in plain text.</p>
+    <form id="mcp-config-form" class="form-grid">
+     <label class="full">Set New Static Token
+      <div style="display:flex;gap:8px;margin-top:4px;">
+       <input id="mcp-token-input" type="password" value="" placeholder="Enter new secret token to save" required style="font-family:monospace;font-size:12px;">
+       <button class="primary" style="white-space:nowrap;">Save Token</button>
+       <button type="button" class="secondary" data-action="regenerate-mcp-token" style="white-space:nowrap;">Generate &amp; Copy</button>
+      </div>
+     </label>
+    </form>
+   </div>
+   ` : ''}
   </section>
+
  <section class="card"><h2>Publishing for selected store</h2>${check('Shopify authorization',s.connected,'Connect '+(s.domain||'the destination store'))}${check('Pages, policies and products',s.connected,'Changes publish only to the selected store')}<p class="helper">Shopify authorization requires a public HTTPS app URL and the callback URL registered with your Shopify app.</p></section>
  ${plan}</div>`;
 }
@@ -395,15 +425,16 @@ document.body.addEventListener('click',e=>{
     break;
    }
    case 'regenerate-mcp-token':{
-    if(window.confirm('Generate a new MCP authentication token? Existing ChatGPT / MCP client connections will need to be updated with the new token.')){
+    if(window.confirm('Generate a new legacy compatibility token? It will be copied to your clipboard once and stored securely as a SHA-256 hash.')){
      perform(async()=>{
       const res=await api('/api/mcp/token/regenerate','POST',{});
-      data.mcp_token=res.token;
-      return 'New MCP token generated: '+res.token;
+      navigator.clipboard?.writeText(res.token);
+      return 'New legacy token generated and copied to clipboard. Save it securely; it will not be displayed again.';
      });
     }
     break;
    }
+
    case 'publish-store-design':perform(async()=>{await api('/api/store-design/publish','POST',{});return 'Published store design theme, navigation menus, payment icons, and Track123 setup to Shopify.';});break;
   case 'apply-usa':if(usaPlan&&window.confirm('Apply USA-only region markets and replace merchant shipping settings with free USA shipping? This may pause other markets and remove their current shipping rates.'))perform(async()=>{const result=await api('/api/shopify/usa-apply','POST',{fingerprint:usaPlan.fingerprint});usaPlan=null;return result.manual_steps.length?'USA market and merchant shipping verified. Check the remaining Shopify store details.':'USA market and merchant shipping verified in Shopify.';});break;
  }
@@ -439,8 +470,8 @@ document.body.addEventListener('submit',e=>{
    if(form.id==='mcp-config-form')perform(async()=>{
    const token=val('mcp-token-input');
    await api('/api/mcp/settings','POST',{token:token});
-   data.mcp_token=token;
-   return 'MCP Connection Token saved successfully.';
+   const inp=$('mcp-token-input');if(inp)inp.value='';
+   return 'Legacy compatibility token saved securely (SHA-256 hashed).';
   });
   if(form.id==='store-design-form')perform(async()=>{const refUrl=val('store-design-reference');await api('/api/store-design/build','POST',{reference_url:refUrl});return 'Started store design generation. Follow progress in Task center or preview below.';});
  if(form.id==='design-colors-form')perform(async()=>{await api('/api/store','PUT',{name:data.store.name,domain:data.store.domain,business:data.store.business,brand:{color:val('design-primary'),accent:val('design-accent')}});return 'Brand colors saved.';});

@@ -18,11 +18,14 @@ if str(ROOT) not in sys.path:
 
 from starlette.testclient import TestClient
 
+import os
 import server
 import mcp_server
 
 
 def test_mcp_comprehensive_capabilities():
+    old_legacy_env = os.environ.get("MCP_LEGACY_TOKEN_ENABLED")
+    os.environ["MCP_LEGACY_TOKEN_ENABLED"] = "true"
     with tempfile.TemporaryDirectory() as temp:
         server.DB = Path(temp) / "test_mcp_all.db"
         server.init()
@@ -218,6 +221,10 @@ def test_mcp_comprehensive_capabilities():
         assert mcp_server.get_mcp_token() == regenerated_token
 
         print("\nALL MCP COMPREHENSIVE INTEGRATION CAPABILITIES PASSED 100%!")
+        if old_legacy_env is not None:
+            os.environ["MCP_LEGACY_TOKEN_ENABLED"] = old_legacy_env
+        else:
+            os.environ.pop("MCP_LEGACY_TOKEN_ENABLED", None)
 
 
 if __name__ == "__main__":

@@ -2,5 +2,5 @@ fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1
 httpx>=0.27,<1
 cryptography>=43,<47
-
+pyjwt[crypto]>=2.8.0,<3
 Pillow>=10,<13
