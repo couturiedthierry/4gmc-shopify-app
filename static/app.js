@@ -85,16 +85,16 @@ async function pollSiteKitJob(){
   await refresh();showToast(siteKitLastRun+skipped);
  }catch(error){showToast(error?.message||error,true);siteKitPollTimer=setTimeout(pollSiteKitJob,5000);}
 }
-async function startSiteKitJob(sourceUrl){
+async function startSiteKitJob(){
  if(siteKitRunning())return;
  busy=true;
- try{const job=await api('/api/site-kit/prepare-job','POST',{source_url:sourceUrl});watchSiteKitJob(job);render();showToast('Page generation started. You can leave this screen while it continues.');}
+ try{const job=await api('/api/site-kit/prepare-job','POST',{});watchSiteKitJob(job);render();showToast('Page generation started. You can leave this screen while it continues.');}
  catch(error){showToast(error?.message||error,true);}
  finally{busy=false;if(data)render();}
 }
 const wait = milliseconds => new Promise(resolve=>setTimeout(resolve,milliseconds));
-async function waitForSiteKitGeneration(sourceUrl,onProgress){
- let job=await api('/api/site-kit/prepare-job','POST',{source_url:sourceUrl});
+async function waitForSiteKitGeneration(onProgress){
+ let job=await api('/api/site-kit/prepare-job','POST',{});
  while(['queued','running'].includes(job.status)){
   onProgress(job.progress+(job.total?` (${job.completed}/${job.total})`:''));
   await wait(1800);job=await api('/api/jobs/'+job.id);
@@ -210,8 +210,10 @@ function products(){
   source?'<p class="sub">The reference is saved. Generate the destination-brand pages again before publishing.</p>':'<div class="empty">Enter a reference store to generate original pages for your brand.</div>';
  const result=siteKitLastRun?`<div class="note">${esc(siteKitLastRun)}${siteKitRunning()&&siteKitJob.total?` (${siteKitJob.completed}/${siteKitJob.total})`:''}</div>`:'';
  const generating=siteKitRunning();
- return header('Pages & policies','Generate original pages for the selected brand. The reference store supplies structure and operating rules only; its text and identity are blocked from publication.')+
-  `<div class="grid two-col"><div class="grid"><section class="card"><h2>Reference structure</h2><p class="sub">Enter the store containing your usual page structure and policy rules. 4GMC extracts a neutral outline, then writes new pages using only this destination store identity.</p><form id="policy-source-form" class="form-grid"><label class="full">Reference store homepage<input id="source-store-url" type="url" value="${esc(source)}" placeholder="https://your-reference-store.com" required></label><div class="full actions"><button class="primary" ${busy||generating?'disabled':''}>${generating?'Generating pages…':data.store.connected?'Generate brand pages & publish':'Generate brand pages'}</button></div></form><p class="helper">Reference sentences are never sent to the final writing step. Publication stops if source wording, branding, contacts, domains, placeholders, or missing destination facts are detected.</p></section><section class="card"><h2>Generated brand pages & policies</h2><p class="sub">${managed.length?`${managed.length} original documents generated for ${esc(data.store.business.business_name||data.store.name)}`:'About, Contact, FAQ, Shipping, Returns, Privacy, Terms, and referenced custom page types will appear here.'}</p>${result}${list}${source&&data.store.connected?'<div class="actions" style="margin-top:16px"><button class="secondary" data-action="run-site-kit">Publish verified brand pages</button></div>':''}</section></div><div class="grid"><section class="card"><h2>Destination identity</h2><p class="sub">Every generated page is sealed against these selected-store facts before Shopify publication.</p>${check('Store name',Boolean(data.store.business.business_name),'Required throughout generated pages')}${check('Product genre',Boolean(data.store.business.product_genre),esc(data.store.business.product_genre||'Tailors generated page tone and content'))}${check('Domain',Boolean(data.store.business.domain_name),'Only your customer-facing domain is allowed')}${check('Contact email',Boolean(data.store.business.email),'Other email addresses are blocked')}${check('Store address',Boolean(data.store.business.address),'Used only where customer identity requires it')}${check('Phone',Boolean(data.store.business.phone),'Required on the Contact page')}${check('Country & currency',Boolean(data.store.business.country&&data.store.business.currency),'Used for destination policy context')}${check('Shopify',data.store.connected,'Destination for automatic publication')}<div class="actions"><button class="secondary" data-view="business">Edit store details</button></div></section><section class="card"><h2>Automatic brand guard</h2><p class="sub">Publishing fails closed when any of these checks does not pass.</p>${check('Neutral reference outline',true,'Source prose is removed before writing')}${check('Original destination wording',true,'Long source passages are rejected')}${check('Source identity scan',true,'Brands, emails, domains, and contacts are blocked')}${check('Required policy facts',true,'Shipping and return terms must be clear')}${check('Sealed content',true,'Later edits require regeneration and a new safety check')}</section></div></div>`;
+ return header('Pages & policies', 'Create complete Google Merchant Center-ready store information and policy pages from your store configuration.')+
+  `<div class="grid two-col">\n     <div class="grid">\n       <section class="card">\n         <h2>Static Brand Pages & Policies</h2>\n         <p class="sub">Generate required ecommerce pages deterministically with zero AI dependencies.</p>\n         <ul style="list-style: none; padding: 0; margin-bottom: 24px;">\n           <li>✓ About Us</li>\n           <li>✓ Contact Us</li>\n           <li>✓ FAQ</li>\n           <li>✓ Legal Notice</li>\n           <li>✓ Privacy Policy</li>\n           <li>✓ Payment Policy</li>\n           <li>✓ Shipping Policy</li>\n           <li>✓ Terms of Service</li>\n           <li>✓ Refund & Return Policy</li>\n           <li>✓ Order Cancellation Policy</li>\n           <li>✓ Warranty Policy</li>\n         </ul>\n         <form id="policy-source-form" class="form-grid">\n           <div class="full actions">\n             <button class="primary" ${busy||generating?'disabled':''}>${generating?'Generating pages...':'GENERATE PAGES & POLICIES'}</button>\n           </div>\n         </form>\n       </section>\n       <section class="card">\n         <h2>Generated brand pages & policies</h2>\n         <p class="sub">${managed.length?`${managed.length} original documents generated for ${esc(data.store.business.business_name||data.store.name)}`:'Pages will appear here after generation.'}</p>\n         ${result}${list}\n         ${managed.length&&data.store.connected?'<div class="actions" style="margin-top:16px"><button class="secondary" data-action="run-site-kit">Publish verified brand pages</button></div>':''}\n       </section>\n     </div>\n     <div class="grid">\n       <section class="card">\n         <h2>Destination identity</h2>\n         <p class="sub">Every generated page is built directly from these selected-store facts before Shopify publication.</p>\n         ${check('Store name',Boolean(data.store.business.business_name),'Required throughout generated pages')}\n         ${check('Product genre',Boolean(data.store.business.product_genre),esc(data.store.business.product_genre||'Tailors generated page tone and content'))}\n         ${check('Domain',Boolean(data.store.business.domain_name),'Only your customer-facing domain is allowed')}\n         ${check('Contact email',Boolean(data.store.business.email),'Required on contact and policies')}\n         ${check('Store address',Boolean(data.store.business.address),'Used only where customer identity requires it')}\n         ${check('Phone',Boolean(data.store.business.phone),'Required on the Contact page')}\n         ${check('Country & currency',Boolean(data.store.business.country&&data.store.business.currency),'Used for destination policy context')}\n         ${check('Shopify',data.store.connected,'Destination for automatic publication')}\n         <div class="actions"><button class="secondary" data-view="business">Edit store details</button></div>\n       </section>\n     </div>\n   </div>`;
+
+
 
 }
 
@@ -244,20 +246,17 @@ function design(){
  const ready=Boolean(data.storefront);
  const preview=ready?storefrontPreview(data.storefront):'<div class="preview-blank" aria-label="Storefront preview is blank until the full store is generated"></div>';
  return header('Store design','Choose store branding, colors, layout, and trigger complete Shopify store design generation.')+
- `<section class="card full store-design-hero-card" style="margin-bottom:18px;">
-  <h2>Generate & Build Store Design</h2>
-  <p class="sub">Extract reference store visual layout, build responsive Liquid theme templates, 4-column footer, native payment SVG icons, checkout branding, Track123 tracking link, and SEO proposals.</p>
-  <form id="store-design-form" class="form-grid">
-   <label class="full">Reference store for layout & structure
-    <input id="store-design-reference" type="url" value="${esc(store.policy_source_url||'')}" placeholder="https://reference-store.com" required>
-   </label>
-   <div class="full actions">
-    <button class="primary" ${!busy?'':'disabled'}>Generate & Build Store Design</button>
-    <button type="button" class="secondary" data-action="publish-store-design" ${!busy?'':'disabled'}>Publish Verified Store Design</button>
-   </div>
-  </form>
-  <p class="helper">${store.connected?'Ready to build & stage unpublished draft theme, navigation, payment icons & Track123 to Shopify.':'Ready to generate complete store design spec. Connect Shopify to publish to live store.'}</p>
- </section>`+
+`<section class="card full store-design-hero-card" style="margin-bottom:18px;">
+ <h2>Generate & Build Store Design</h2>
+ <p class="sub">Build responsive Liquid theme templates, map curated collections to dynamic carousels, setup 4-column footer, native payment SVG icons, checkout branding, Track123 tracking link, and SEO proposals.</p>
+ <form id="store-design-form" class="form-grid">
+  <div class="full actions">
+   <button class="primary" ${!busy?'':'disabled'}>Generate & Build Store Design</button>
+   <button type="button" class="secondary" data-action="publish-store-design" ${!busy?'':'disabled'}>Publish Verified Store Design</button>
+  </div>
+ </form>
+ <p class="helper">${store.connected?'Ready to build & stage unpublished draft theme, navigation, payment icons & Track123 to Shopify.':'Ready to generate complete store design spec. Connect Shopify to publish to live store.'}</p>
+</section>`+
  `<div class="grid two-col"><section class="card"><h2>Storefront preview</h2><p class="sub">${ready?'Generated from your saved branding, published pages, Contact details, and products.':'The preview stays blank until the complete store has been generated.'}</p>${preview}</section><div class="grid">
  <section class="card"><h2>Brand colors</h2><p class="sub">These colors are used for the generated preview and Gemini product mockups.</p><form id="design-colors-form" class="form-grid"><label>Primary color<input id="design-primary" type="color" value="${esc(color)}" required></label><label>Accent color<input id="design-accent" type="color" value="${esc(accent)}" required></label><div class="full actions"><button class="primary">Save colors</button></div></form><p class="helper">Changing colors clears the old preview until you regenerate the store and its product images.</p></section>
  <section class="card"><h2>Logo & favicon</h2><p class="sub">Upload the branding for this selected store. Replacing any file clears the preview until you regenerate it.</p><form id="brand-assets-form" class="form-grid brand-assets-form"><label class="full asset-upload-row"><span class="asset-preview" data-brand-preview="logo">${logoPreview}</span><span class="asset-upload-copy"><strong>Store logo (Light version)</strong><small>PNG, JPG, or WebP · maximum 2 MB</small><input id="design-logo" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></span></label><label class="full asset-upload-row"><span class="asset-preview" data-brand-preview="logo_dark">${logoDarkPreview}</span><span class="asset-upload-copy"><strong>Store logo (Dark version)</strong><small>PNG, JPG, or WebP · maximum 2 MB</small><input id="design-logo-dark" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></span></label><label class="full asset-upload-row"><span class="asset-preview favicon-preview" data-brand-preview="favicon">${faviconPreview}</span><span class="asset-upload-copy"><strong>Favicon</strong><small>PNG, JPG, WebP, or ICO · maximum 512 KB</small><input id="design-favicon" type="file" accept=".png,.jpg,.jpeg,.webp,.ico,image/png,image/jpeg,image/webp,image/x-icon"></span></label><div class="full actions"><button class="primary">Upload branding</button></div></form></section>
@@ -473,7 +472,7 @@ document.body.addEventListener('submit',e=>{
    const inp=$('mcp-token-input');if(inp)inp.value='';
    return 'Legacy compatibility token saved securely (SHA-256 hashed).';
   });
-  if(form.id==='store-design-form')perform(async()=>{const refUrl=val('store-design-reference');await api('/api/store-design/build','POST',{reference_url:refUrl});return 'Started store design generation. Follow progress in Task center or preview below.';});
+  if(form.id==='store-design-form')perform(async()=>{await api('/api/store-design/build','POST',{});return 'Started store design generation. Follow progress in Task center or preview below.';});
  if(form.id==='design-colors-form')perform(async()=>{await api('/api/store','PUT',{name:data.store.name,domain:data.store.domain,business:data.store.business,brand:{color:val('design-primary'),accent:val('design-accent')}});return 'Brand colors saved.';});
  if(form.id==='brand-assets-form')perform(async()=>{
   const logo=$('design-logo').files[0],logoDark=$('design-logo-dark').files[0],favicon=$('design-favicon').files[0];
@@ -514,7 +513,7 @@ document.body.addEventListener('submit',e=>{
  if(form.classList.contains('store-connection-form'))perform(async()=>{const fields=new FormData(form);await api('/api/stores/'+form.dataset.id+'/connection','PUT',{domain:fields.get('domain')});usaPlan=null;return 'Shopify address saved. Authorize or reconnect to publish.';});
  if(form.id==='product-source-form')startCatalogJob(val('product-source-url'), parseInt(val('catalog-max-products'), 10) || 20);
  if(form.id==='product-form')perform(async()=>{await api(`/api/products/${form.dataset.id}`,'PUT',{title:val('p-title'),description:val('p-description'),price:val('p-price'),sku:val('p-sku'),gtin:val('p-gtin')});return 'Product details saved.';});
- if(form.id==='policy-source-form')startSiteKitJob(val('source-store-url'));
+ if(form.id==='policy-source-form')startSiteKitJob();
  if(form.id==='page-form')perform(async()=>{await api(`/api/pages/${form.dataset.id}`,'PUT',{kind:val('page-kind'),title:val('page-title'),body:val('page-body')});return 'Page details saved.';});
 });
 const launchParams=new URLSearchParams(window.location.search);
