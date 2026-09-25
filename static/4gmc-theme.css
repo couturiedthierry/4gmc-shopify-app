@@ -179,6 +179,10 @@ option { background: #1d202b; color: #f0f1fa; }
   border-color: #41465b;
 }
 .site-kit-copy { color: #dce2f2; }
+.site-kit-copy h1, .site-kit-copy h2, .site-kit-copy h3 { color: #f8fafc; font-weight: 700; }
+.site-kit-copy strong { color: #ffffff; font-weight: 700; }
+.site-kit-copy a { color: #8ba4f8; font-weight: 600; text-decoration: underline; }
+.site-kit-copy a:hover { color: #b4c6ff; }
 .store-card-active {
   border-color: #9189e8;
   box-shadow: 0 0 0 1px #8d84dc44, 0 12px 32px #0a0c1899;
@@ -196,6 +200,12 @@ option { background: #1d202b; color: #f0f1fa; }
 .preview.generated .preview-nav { background: #fff; }
 .preview.generated .preview-product { border-color: #dce6f7; }
 .preview.generated .preview-page-copy { color: #243d69; }
+.preview.generated .preview-page-copy h1,
+.preview.generated .preview-page-copy h2,
+.preview.generated .preview-page-copy h3 { color: #102653; font-weight: 700; }
+.preview.generated .preview-page-copy strong { color: #102653; font-weight: 700; }
+.preview.generated .preview-page-copy a { color: #1941ba; font-weight: 600; text-decoration: underline; }
+.preview.generated .preview-page-copy a:hover { color: #002596; }
 .login-shell {
   background: radial-gradient(circle at 60% 7%, #454164, #191a27 43%, #11131c 88%);
 }

@@ -111,27 +111,46 @@ def extract_policy_text(markup: str) -> str:
     return text[:18000]
 
 
+ALTERNATIVE_POLICY_PATHS = {
+    "shipping": ["/policies/shipping-policy", "/pages/shipping-policy", "/pages/shipping", "/pages/delivery"],
+    "returns": ["/policies/refund-policy", "/policies/return-policy", "/pages/refund-policy", "/pages/return-policy", "/pages/returns"],
+    "privacy": ["/policies/privacy-policy", "/pages/privacy-policy", "/pages/privacy"],
+    "terms": ["/policies/terms-of-service", "/policies/terms-of-use", "/pages/terms-of-service", "/pages/terms-and-conditions", "/pages/terms"],
+    "contact_information": ["/policies/contact-information", "/pages/contact-information", "/pages/contact-us", "/pages/contact"],
+    "legal_notice": ["/policies/legal-notice", "/pages/legal-notice", "/pages/legal"],
+    "terms_of_sale": ["/policies/terms-of-sale", "/pages/terms-of-sale"],
+}
+
+
 async def collect_policies(origin: str) -> dict[str, str]:
     policies: dict[str, str] = {}
     missing: list[str] = []
     async with httpx.AsyncClient(timeout=20, follow_redirects=False, trust_env=False) as client:
-        for kind, path in POLICY_PATHS.items():
-            try:
-                async with client.stream("GET", origin + path, headers={"Accept": "text/html"}) as response:
-                    if response.status_code != 200 or "text/html" not in response.headers.get("content-type", ""):
-                        missing.append(kind)
-                        continue
-                    chunks: list[bytes] = []
-                    size = 0
-                    async for chunk in response.aiter_bytes():
-                        size += len(chunk)
-                        if size > 512_000:
-                            raise ValueError(f"The {kind} policy page is too large to import.")
-                        chunks.append(chunk)
-                    charset = response.charset_encoding or "utf-8"
-                    policies[kind] = extract_policy_text(b"".join(chunks).decode(charset, errors="replace"))
-            except httpx.RequestError as error:
-                raise ValueError(f"Could not read the source store's {kind} policy.") from error
+        for kind, primary_path in POLICY_PATHS.items():
+            candidate_paths = ALTERNATIVE_POLICY_PATHS.get(kind, [primary_path])
+            found = False
+            for path in candidate_paths:
+                try:
+                    async with client.stream("GET", origin + path, headers={"Accept": "text/html"}) as response:
+                        if response.status_code != 200 or "text/html" not in response.headers.get("content-type", ""):
+                            continue
+                        chunks: list[bytes] = []
+                        size = 0
+                        async for chunk in response.aiter_bytes():
+                            size += len(chunk)
+                            if size > 512_000:
+                                break
+                            chunks.append(chunk)
+                        charset = response.charset_encoding or "utf-8"
+                        text = extract_policy_text(b"".join(chunks).decode(charset, errors="replace"))
+                        if len(text.strip()) >= 80:
+                            policies[kind] = text
+                            found = True
+                            break
+                except Exception:
+                    continue
+            if not found:
+                missing.append(kind)
     if not policies:
         raise ValueError("No public policy pages could be read from the source store.")
     return policies
