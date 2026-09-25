@@ -38,9 +38,10 @@ ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_mcp_token() -> str:
     """
-    Retrieve valid MCP authentication token.
-    If legacy token mode is enabled, returns or initializes the legacy token.
-    Otherwise returns a valid signed OAuth 2.1 RS256 JWT access token.
+    Retrieve valid MCP authentication token for testing and backward compatibility.
+    In legacy mode, returns the legacy token.
+    In OAuth mode, creates a test access token for test runners.
+    Note: This is an internal helper and is NEVER called or returned by any HTTP route.
     """
     if mcp_oauth.is_legacy_token_enabled():
         token = os.environ.get("MCP_TOKEN") or os.environ.get("GMC_MCP_TOKEN")
@@ -48,22 +49,20 @@ def get_mcp_token() -> str:
             mcp_oauth.set_legacy_token(token.strip())
             return token.strip()
 
-        import server
-        server.ensure_registry()
-        with server.registry() as c:
-            row = c.execute("SELECT value FROM app_settings WHERE key='mcp_api_token'").fetchone()
-            if row and row["value"]:
-                return row["value"]
-            new_token = f"gmc_mcp_{secrets.token_hex(16)}"
-            mcp_oauth.set_legacy_token(new_token)
-            c.execute("INSERT OR REPLACE INTO app_settings(key,value) VALUES('mcp_api_token', ?)", (new_token,))
-            return new_token
+        mem_token = mcp_oauth.get_in_memory_legacy_token()
+        if mem_token:
+            return mem_token
+
+        if not mcp_oauth.has_legacy_token():
+            return mcp_oauth.rotate_legacy_token()
+
+        return ""
 
     return mcp_oauth.create_access_token(store_id=1, scopes=mcp_oauth.ALL_SCOPES)
 
 
 def set_mcp_token(token: str) -> str:
-    """Update static MCP API authentication token for legacy compatibility."""
+    """Update static MCP API authentication token for legacy compatibility. Stores only SHA-256 hash."""
     token = (token or "").strip()
     if not token:
         raise ValueError("MCP Token cannot be empty")
@@ -71,18 +70,18 @@ def set_mcp_token(token: str) -> str:
     import server
     server.ensure_registry()
     with server.registry() as c:
-        c.execute("INSERT OR REPLACE INTO app_settings(key,value) VALUES('mcp_api_token', ?)", (token,))
+        c.execute("DELETE FROM app_settings WHERE key='mcp_api_token'")
     return token
 
 
 def regenerate_mcp_token() -> str:
-    """Generate and store a new secure MCP API authentication token for legacy compatibility."""
+    """Generate and store a new secure MCP API authentication token for legacy compatibility. Stores only SHA-256 hash."""
     import server
     server.ensure_registry()
+    with server.registry() as c:
+        c.execute("DELETE FROM app_settings WHERE key='mcp_api_token'")
     new_token = f"gmc_mcp_{secrets.token_hex(16)}"
     mcp_oauth.set_legacy_token(new_token)
-    with server.registry() as c:
-        c.execute("INSERT OR REPLACE INTO app_settings(key,value) VALUES('mcp_api_token', ?)", (new_token,))
     return new_token
 
 
@@ -1330,17 +1329,66 @@ async def mcp_info_endpoint(request: Request):
     }
 
 
+def require_admin_or_mcp_admin(request: Request) -> Tuple[int, Optional[mcp_oauth.MCPTokenContext]]:
+    """
+    Ensure the request is authorized with administrative privileges.
+    Permits:
+    1. Authenticated 4GMC web dashboard administrator (via gmc_session cookie).
+    2. Bearer token with administrative scope ('4gmc:admin' or '4gmc:stores:write').
+    3. Legacy admin token (if legacy mode is enabled).
+    Strictly rejects any unauthenticated caller (401) or read-only / insufficient scope token (403).
+    """
+    import server
+    # 1. Check 4GMC dashboard administrator session
+    cookie = request.cookies.get("gmc_session", "")
+    if cookie:
+        try:
+            stamp, sig = cookie.split(".", 1)
+            expected = hmac.new(server.SESSION_SECRET.encode(), stamp.encode(), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(sig, expected) and int(stamp) >= time.time():
+                store_id = int(request.cookies.get("gmc_store_id", "1"))
+                return store_id, None
+        except Exception:
+            pass
+
+    # 2. Authenticate MCP Bearer token
+    ctx = mcp_oauth.authenticate_mcp_request(request)
+    if ctx.auth_method == "oauth":
+        # Strict scope verification: only admin tokens can manage MCP settings
+        admin_scopes = {"4gmc:admin", "4gmc:stores:write"}
+        if not admin_scopes.intersection(ctx.scopes):
+            raise HTTPException(
+                status_code=403,
+                detail="Forbidden: Administrative scope required to access MCP settings. A read-only token cannot access this endpoint.",
+            )
+    elif ctx.auth_method == "legacy":
+        if not mcp_oauth.is_legacy_token_enabled():
+            raise HTTPException(status_code=403, detail="Forbidden: Legacy token access is disabled")
+
+    return ctx.store_id, ctx
+
+
 @router.get("/api/mcp/settings")
 async def mcp_settings_get(request: Request):
-    """Get current MCP connection configuration."""
-    store_id = authenticate_mcp_request(request)
-    token = get_mcp_token()
+    """Get current MCP connection configuration. Requires administrator authorization."""
+    store_id, ctx = require_admin_or_mcp_admin(request)
     public_url = mcp_oauth.get_public_url()
     endpoint = f"{public_url}/api/mcp"
     legacy_enabled = mcp_oauth.is_legacy_token_enabled()
+    has_legacy = mcp_oauth.has_legacy_token()
+
+    # Never return an access token! Under no circumstances should an access token be returned here.
+    token_display = None
+    if legacy_enabled and has_legacy:
+        token_display = "••••••••••••"
+        if ctx and ctx.auth_method == "legacy":
+            token_display = mcp_oauth.get_in_memory_legacy_token() or "••••••••••••"
+        elif mcp_oauth.get_in_memory_legacy_token():
+            token_display = mcp_oauth.get_in_memory_legacy_token()
+
     return {
         "ok": True,
-        "token": token,
+        "token": token_display,
         "url": endpoint,
         "server_name": "4GMC Unified MCP Server",
         "store_id": store_id,
@@ -1372,22 +1420,26 @@ async def mcp_settings_get(request: Request):
 
 @router.post("/api/mcp/settings")
 async def mcp_settings_post(request: Request):
-    """Save updated MCP API token."""
-    store_id = authenticate_mcp_request(request)
+    """Save updated MCP API token for legacy compatibility. Admin only."""
+    store_id, ctx = require_admin_or_mcp_admin(request)
+    if not mcp_oauth.is_legacy_token_enabled():
+        raise HTTPException(status_code=400, detail="Legacy static token configuration is disabled. OAuth 2.1 is active.")
     body = await request.json()
     token = str(body.get("token") or "").strip()
     if not token:
         raise HTTPException(status_code=400, detail="Token cannot be empty")
     set_mcp_token(token)
-    return {"ok": True, "token": token, "message": "MCP connection token updated successfully"}
+    return {"ok": True, "token": token, "message": "Legacy MCP connection token updated successfully (SHA-256 hashed)"}
 
 
 @router.post("/api/mcp/token/regenerate")
 async def mcp_token_regenerate(request: Request):
-    """Generate and store a new secure MCP API authentication token."""
-    store_id = authenticate_mcp_request(request)
+    """Generate and store a new secure MCP API authentication token for legacy compatibility. Admin only."""
+    store_id, ctx = require_admin_or_mcp_admin(request)
+    if not mcp_oauth.is_legacy_token_enabled():
+        raise HTTPException(status_code=400, detail="Legacy static token generation is disabled. OAuth 2.1 is active.")
     new_token = regenerate_mcp_token()
-    return {"ok": True, "token": new_token, "message": "New MCP token generated"}
+    return {"ok": True, "token": new_token, "message": "New legacy MCP token generated (SHA-256 hashed)"}
 
 
 @router.get("/api/mcp/openapi.json")

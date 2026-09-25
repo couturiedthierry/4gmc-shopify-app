@@ -93,6 +93,8 @@ def ensure_registry():
         c.execute("INSERT OR IGNORE INTO app_stores(id) VALUES(1)")
         c.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         c.execute("INSERT OR IGNORE INTO app_settings(key,value) VALUES('task_capacity','4')")
+        # Purge any legacy plaintext secret tokens from SQLite to prevent secret leakage
+        c.execute("DELETE FROM app_settings WHERE key='mcp_api_token'")
 
 
 def task_capacity_value():

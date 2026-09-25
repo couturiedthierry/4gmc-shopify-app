@@ -318,13 +318,32 @@ def run_all_oauth_tests():
         assert get_auth.status_code == 200
         assert "Connect to 4GMC Studio" in get_auth.text
 
-        # Approve authorization with admin password
-        csrf_token = hmac.new(
-            server.SESSION_SECRET.encode(),
-            f"csrf:chatgpt:{code_challenge}".encode(),
-            hashlib.sha256,
-        ).hexdigest()
+        # Extract single-use session-bound CSRF token from rendered consent page
+        import re
+        csrf_match = re.search(r'name="csrf_token"\s+value="([^"]+)"', get_auth.text)
+        assert csrf_match, "CSRF token must be present in consent form"
+        csrf_token = csrf_match.group(1)
 
+        # CSRF Security Check 1: Submitting with tampered / invalid CSRF token must fail (403)
+        post_bad_csrf = client.post(
+            "/oauth/authorize",
+            data={
+                "client_id": "chatgpt",
+                "redirect_uri": redirect_uri,
+                "scope": "4gmc:stores:read 4gmc:pages:write",
+                "code_challenge": code_challenge,
+                "code_challenge_method": "S256",
+                "state": "state123",
+                "csrf_token": "forged.csrf.signature",
+                "action": "approve",
+                "store_id": 1,
+                "admin_password": server.ADMIN_PASSWORD,
+            },
+            follow_redirects=False,
+        )
+        assert post_bad_csrf.status_code == 403
+
+        # CSRF Security Check 2: Submitting with valid CSRF token succeeds
         post_auth = client.post(
             "/oauth/authorize",
             data={
@@ -342,10 +361,57 @@ def run_all_oauth_tests():
             follow_redirects=False,
         )
         assert post_auth.status_code == 303
+
+        # CSRF Security Check 3: Replaying the SAME CSRF token must fail (403 single-use check)
+        post_replay_csrf = client.post(
+            "/oauth/authorize",
+            data={
+                "client_id": "chatgpt",
+                "redirect_uri": redirect_uri,
+                "scope": "4gmc:stores:read 4gmc:pages:write",
+                "code_challenge": code_challenge,
+                "code_challenge_method": "S256",
+                "state": "state123",
+                "csrf_token": csrf_token,
+                "action": "approve",
+                "store_id": 1,
+                "admin_password": server.ADMIN_PASSWORD,
+            },
+            follow_redirects=False,
+        )
+        assert post_replay_csrf.status_code == 403
+
         location = post_auth.headers["location"]
         assert location.startswith(redirect_uri)
         assert "code=" in location
         auth_code = location.split("code=")[1].split("&")[0]
+
+        # Security check: authorization_code exchange requires client_id
+        missing_client_resp = client.post(
+            "/oauth/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": auth_code,
+                "redirect_uri": redirect_uri,
+                "code_verifier": verifier,
+            },
+        )
+        assert missing_client_resp.status_code == 400
+        assert missing_client_resp.json()["error"] == "invalid_client"
+
+        # Security check: authorization_code exchange rejects client_id mismatch
+        wrong_client_resp = client.post(
+            "/oauth/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": auth_code,
+                "redirect_uri": redirect_uri,
+                "client_id": "rogue_client",
+                "code_verifier": verifier,
+            },
+        )
+        assert wrong_client_resp.status_code == 400
+        assert wrong_client_resp.json()["error"] == "invalid_grant"
 
         # 13. Test PKCE Mismatch
         pkce_fail_resp = client.post(
@@ -379,6 +445,41 @@ def run_all_oauth_tests():
         assert "refresh_token" in token_data
         assert token_data["token_type"] == "Bearer"
         assert token_data["expires_in"] == 3600
+
+        # Security check: refresh_token grant requires client_id
+        missing_rt_client = client.post(
+            "/oauth/token",
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": token_data["refresh_token"],
+            },
+        )
+        assert missing_rt_client.status_code == 400
+        assert missing_rt_client.json()["error"] == "invalid_client"
+
+        # Security check: refresh_token grant rejects client_id mismatch
+        wrong_rt_client = client.post(
+            "/oauth/token",
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": token_data["refresh_token"],
+                "client_id": "different_client",
+            },
+        )
+        assert wrong_rt_client.status_code == 400
+        assert wrong_rt_client.json()["error"] == "invalid_grant"
+
+        # Successful refresh with bound client_id
+        valid_refresh_resp = client.post(
+            "/oauth/token",
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": token_data["refresh_token"],
+                "client_id": "chatgpt",
+            },
+        )
+        assert valid_refresh_resp.status_code == 200
+        assert "access_token" in valid_refresh_resp.json()
 
         # 12. Authorization Code Replay Attack
         replay_resp = client.post(
@@ -515,14 +616,27 @@ def run_all_oauth_tests():
         os.environ["MCP_LEGACY_TOKEN_ENABLED"] = "false"
 
         # -------------------------------------------------------------
-        # 19. No Secrets in Responses or Plaintext
+        # 19. No Secrets in Responses, No Plaintext in SQLite, No Privilege Escalation
         # -------------------------------------------------------------
-        settings_resp = client.get("/api/mcp/settings", headers={"Authorization": f"Bearer {valid_token}"})
-        assert settings_resp.status_code == 200
-        settings_text = settings_resp.text
+        admin_settings_resp = client.get("/api/mcp/settings", headers={"Authorization": f"Bearer {valid_token}"})
+        assert admin_settings_resp.status_code == 200
+        settings_text = admin_settings_resp.text
         assert server.ADMIN_PASSWORD not in settings_text
         assert server.SESSION_SECRET not in settings_text
         assert "private_key" not in settings_text.lower()
+        # Access token must NEVER be returned in settings
+        assert admin_settings_resp.json().get("token") is None
+
+        # Privilege Escalation Check: A read-only token MUST be rejected with 403 Forbidden
+        read_only_test_token = mcp_oauth.create_access_token(store_id=1, scopes=["4gmc:stores:read"])
+        escalate_resp = client.get("/api/mcp/settings", headers={"Authorization": f"Bearer {read_only_test_token}"})
+        assert escalate_resp.status_code == 403
+        assert "administrative scope required" in escalate_resp.json()["detail"].lower()
+
+        # Database Check: Plaintext mcp_api_token must NEVER be stored in app_settings in SQLite
+        with server.registry() as c:
+            raw_setting = c.execute("SELECT 1 FROM app_settings WHERE key='mcp_api_token'").fetchone()
+            assert raw_setting is None, "Plaintext token must not exist in app_settings table!"
 
         # -------------------------------------------------------------
         # 20. Existing Shopify OAuth Remains Independent & Functional

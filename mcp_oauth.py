@@ -237,6 +237,17 @@ def init_oauth_db() -> None:
             )
             """
         )
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS oauth_csrf_nonces (
+                nonce TEXT PRIMARY KEY,
+                client_id TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                used INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
 
 
 def ensure_keypair() -> Tuple[str, str, str]:
@@ -539,7 +550,7 @@ def get_legacy_token_hash() -> str:
         if row and row["token_hash"]:
             return row["token_hash"]
 
-        # Check app_settings legacy fallback
+        # Check app_settings legacy fallback, hash it, and purge plaintext immediately
         app_row = c.execute("SELECT value FROM app_settings WHERE key='mcp_api_token'").fetchone()
         if app_row and app_row["value"]:
             h = hashlib.sha256(app_row["value"].encode("utf-8")).hexdigest()
@@ -547,16 +558,33 @@ def get_legacy_token_hash() -> str:
                 "INSERT OR REPLACE INTO oauth_legacy_tokens(token_hash, store_id, description, created_at, revoked) VALUES(?, 1, 'migrated', ?, 0)",
                 (h, int(time.time())),
             )
+            c.execute("DELETE FROM app_settings WHERE key='mcp_api_token'")
             return h
 
     return ""
 
 
+_in_memory_legacy_token: Optional[str] = None
+
+
+def get_in_memory_legacy_token() -> str:
+    """Retrieve in-memory legacy token for active process without reading from or writing to database."""
+    global _in_memory_legacy_token
+    return _in_memory_legacy_token or ""
+
+
+def has_legacy_token() -> bool:
+    """Check if any valid legacy token hash exists."""
+    return bool(get_legacy_token_hash())
+
+
 def set_legacy_token(raw_token: str) -> None:
-    """Store SHA-256 hash of legacy static token. Never stores raw token."""
+    """Store SHA-256 hash of legacy static token. Never stores raw token in database."""
+    global _in_memory_legacy_token
     raw_token = (raw_token or "").strip()
     if not raw_token:
         raise ValueError("Legacy token cannot be empty")
+    _in_memory_legacy_token = raw_token
     h = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
     init_oauth_db()
     import server
@@ -791,11 +819,24 @@ async def oauth_authorize_get(
     if not requested_scopes:
         requested_scopes = list(READ_SCOPES)
 
-    csrf_token = hmac.new(
+    # Generate secure, single-use, time-limited, session-bound CSRF token
+    csrf_nonce = secrets.token_hex(16)
+    csrf_exp = int(time.time()) + 600
+    session_id = cookie.split(".")[1] if (cookie and "." in cookie) else "anon"
+    csrf_sig = hmac.new(
         server.SESSION_SECRET.encode(),
-        f"csrf:{client_id}:{code_challenge}".encode(),
+        f"oauth_csrf:{client_id}:{code_challenge}:{csrf_exp}:{csrf_nonce}:{session_id}".encode(),
         hashlib.sha256,
     ).hexdigest()
+    csrf_token = f"{csrf_exp}.{csrf_nonce}.{csrf_sig}"
+
+    init_oauth_db()
+    with server.registry() as c:
+        c.execute("DELETE FROM oauth_csrf_nonces WHERE expires_at < ?", (int(time.time()),))
+        c.execute(
+            "INSERT INTO oauth_csrf_nonces(nonce, client_id, expires_at, used, created_at) VALUES(?, ?, ?, 0, ?)",
+            (csrf_nonce, client_id, csrf_exp, int(time.time())),
+        )
 
     read_items = "".join(f"<li style='color:#1e40af;'><code>{html.escape(s)}</code> (Read Access)</li>" for s in requested_scopes if s in READ_SCOPES)
     write_items = "".join(f"<li style='color:#b45309;font-weight:600;'><code>{html.escape(s)}</code> (Write / Live Shopify Modification)</li>" for s in requested_scopes if s in WRITE_SCOPES)
@@ -909,14 +950,39 @@ async def oauth_authorize_post(
         return RedirectResponse(err_url, status_code=303)
 
     import server
-    # Validate CSRF
+    # Validate CSRF: format, expiration, single-use DB nonce, and cryptographic signature
+    try:
+        parts = csrf_token.split(".")
+        if len(parts) != 3:
+            return HTMLResponse("CSRF verification failed: malformed token", status_code=403)
+        csrf_exp_str, csrf_nonce, csrf_sig = parts
+        csrf_exp = int(csrf_exp_str)
+        if csrf_exp < time.time():
+            return HTMLResponse("CSRF verification failed: token expired", status_code=403)
+    except Exception:
+        return HTMLResponse("CSRF verification failed: invalid token", status_code=403)
+
+    # Check nonce in database to guarantee single-use
+    init_oauth_db()
+    with server.registry() as c:
+        row = c.execute(
+            "SELECT * FROM oauth_csrf_nonces WHERE nonce=? AND client_id=?",
+            (csrf_nonce, client_id),
+        ).fetchone()
+        if not row or row["used"] == 1 or row["expires_at"] < time.time():
+            return HTMLResponse("CSRF verification failed: token already used or expired", status_code=403)
+        c.execute("UPDATE oauth_csrf_nonces SET used=1 WHERE nonce=?", (csrf_nonce,))
+
+    # Verify signature bound to session
+    cookie = request.cookies.get("gmc_session", "")
+    session_id = cookie.split(".")[1] if (cookie and "." in cookie) else "anon"
     expected_csrf = hmac.new(
         server.SESSION_SECRET.encode(),
-        f"csrf:{client_id}:{code_challenge}".encode(),
+        f"oauth_csrf:{client_id}:{code_challenge}:{csrf_exp_str}:{csrf_nonce}:{session_id}".encode(),
         hashlib.sha256,
     ).hexdigest()
-    if not hmac.compare_digest(csrf_token, expected_csrf):
-        return HTMLResponse("CSRF verification failed", status_code=403)
+    if not hmac.compare_digest(csrf_sig, expected_csrf):
+        return HTMLResponse("CSRF verification failed: signature mismatch", status_code=403)
 
     # Validate admin authentication
     is_admin = False
@@ -1027,8 +1093,13 @@ async def oauth_token_endpoint(request: Request):
                     content={"error": "invalid_grant", "error_description": "Redirect URI mismatch"},
                 )
 
-            # Verify client_id if provided
-            if client_id and row["client_id"] != client_id:
+            # Verify client_id is present and matches the client_id to which the code was issued
+            if not client_id:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "invalid_client", "error_description": "Missing required client_id parameter"},
+                )
+            if row["client_id"] != client_id:
                 return JSONResponse(
                     status_code=400,
                     content={"error": "invalid_grant", "error_description": "Client ID mismatch"},
@@ -1086,6 +1157,13 @@ async def oauth_token_endpoint(request: Request):
                 content={"error": "invalid_request", "error_description": "Missing refresh_token"},
             )
 
+        req_client_id = (client_id or data.get("client_id", "")).strip()
+        if not req_client_id:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "invalid_client", "error_description": "Missing required client_id parameter"},
+            )
+
         token_hash = hashlib.sha256(raw_refresh.encode("ascii")).hexdigest()
         now = int(time.time())
 
@@ -1095,6 +1173,13 @@ async def oauth_token_endpoint(request: Request):
                 return JSONResponse(
                     status_code=400,
                     content={"error": "invalid_grant", "error_description": "Refresh token is invalid, expired, or revoked"},
+                )
+
+            # Strictly verify refresh token is bound to the requesting client
+            if row["client_id"] != req_client_id:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "invalid_grant", "error_description": "Refresh token was not issued to this client"},
                 )
 
             # Rotate refresh token
