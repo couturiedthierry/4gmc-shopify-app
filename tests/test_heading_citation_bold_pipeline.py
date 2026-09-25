@@ -25,8 +25,8 @@ def test_heading_citation_bold_pipeline():
         title = server.SITE_KIT_TITLES.get(kind, kind.replace('_', ' ').title())
         html = server.format_and_link_brand_page(title, raw_body, business)
 
-        # H1 check
-        assert re.search(r'<h1\b[^>]*>.*?</h1>', html, re.I), f"Page '{kind}' missing <h1> title"
+        # Title duplicate check: Page body must NOT duplicate the page title or have H1 in body
+        assert not re.search(r'<h1\b[^>]*>.*?</h1>', html, re.I), f"Page '{kind}' should not contain <h1> duplicate in body"
         # H2/H3 check
         assert re.search(r'<h[23]\b[^>]*>.*?</h[23]>', html, re.I), f"Page '{kind}' missing <h2> or <h3> headings"
         # Bold labels
@@ -57,8 +57,9 @@ For assistance, email support@aurahome.com or call +1 (800) 555-0144.
 """
     formatted_ai = server.format_and_link_brand_page("Custom Brand Policy", ai_raw_markdown, business)
 
-    # Must contain H1, H2, UL, strong labels
-    assert '<h1>Custom Brand Policy</h1>' in formatted_ai
+    # Must NOT contain duplicate H1 title, but must contain H2, UL, strong labels
+    assert '<h1>Custom Brand Policy</h1>' not in formatted_ai
+    assert '<h1' not in formatted_ai
     assert '<h2>Shipping &amp; Delivery Terms</h2>' in formatted_ai or '<h2>Shipping & Delivery Terms</h2>' in formatted_ai
     assert '<ul>' in formatted_ai
     assert '<strong>Processing Time:</strong>' in formatted_ai
@@ -94,6 +95,35 @@ Ensure that **all original packaging** is preserved.
     formatted_attr = server.format_and_link_brand_page("Policy", attributed_md, business)
     assert '<h2 class="brand-section-header">Shipping Policy</h2>' in formatted_attr, "Heading text was corrupted with link"
     assert '<p>Refer to our <a href="/policies/shipping-policy">Shipping Policy</a>' in formatted_attr
+
+    # 5. Verify Prevention of Duplicate Page Title Headings
+    # Case A: Triple About Us matching user's live screenshot
+    triple_about = """<h1>ABOUT US</h1>
+<h2>ABOUT US</h2>
+<p>Welcome to VYROX, your trusted destination for dependable lawn care.</p>
+<h2>OUR MISSION</h2>
+<p>Our mission is to provide reliable equipment.</p>
+<h2>WHAT WE BELIEVE</h2>
+<p>We believe in quality.</p>"""
+    cleaned_about = server.format_and_link_brand_page("About Us", triple_about, {'business_name': 'VYROX'})
+    assert '<h1' not in cleaned_about, "Body must not contain H1 title"
+    assert '<h2>ABOUT US</h2>' not in cleaned_about, "Duplicate title H2 must be removed"
+    assert '<h2>About Us</h2>' not in cleaned_about, "Duplicate title H2 must be removed"
+    assert '<h2>OUR MISSION</h2>' in cleaned_about, "Subsequent section heading was preserved"
+    assert '<h2>WHAT WE BELIEVE</h2>' in cleaned_about, "Subsequent section heading was preserved"
+
+    # Case B: Markdown duplicate title headers # About Us and ## About Us
+    md_about = """# About Us
+## About Us
+Welcome to VYROX.
+
+## Our Mission
+Our mission is clear."""
+    cleaned_md = server.format_and_link_brand_page("About Us", md_about, {'business_name': 'VYROX'})
+    assert '<h1' not in cleaned_md
+    assert '<h2>About Us</h2>' not in cleaned_md
+    assert '<h2>Our Mission</h2>' in cleaned_md
+    assert '<p>Welcome to VYROX.</p>' in cleaned_md
 
     print("ALL HEADING, CITATION, AND BOLD PIPELINE TESTS PASSED 100%!")
 

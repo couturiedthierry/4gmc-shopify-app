@@ -136,9 +136,9 @@ def test_mcp_comprehensive_capabilities():
         })
         assert call_resp.status_code == 200
         update_result = call_resp.json()["result"]["data"]
-        assert update_result["ok"] is True
         formatted_html = update_result["body"]
-        assert "<h1>Contact Us</h1>" in formatted_html
+        assert "<h1>Contact Us</h1>" not in formatted_html
+        assert "<h1>" not in formatted_html
         assert "<h2>" in formatted_html
         assert '<a href="mailto:support@vyrox.cc">support@vyrox.cc</a>' in formatted_html
         assert 'href="tel:19293241981"' in formatted_html

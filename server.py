@@ -2128,9 +2128,10 @@ def standard_site_pages(business):
 
     return {
         'about': (
-            f'<h2>About {name}</h2>\n'
             f'<p>{name} is an online store serving customers in the United States. '
             f'We are dedicated to offering quality products and reliable customer support.</p>\n'
+            f'<h2>Our Mission</h2>\n'
+            f'<p>Our mission at {name} is to provide dependable, high-quality products engineered for long-lasting performance and everyday reliability.</p>\n'
             f'<h3>Customer Support</h3>\n'
             f'<p>For product or order questions, please reach out to us:</p>\n'
             f'<ul>\n'
@@ -2142,8 +2143,8 @@ def standard_site_pages(business):
             f'<p>For details on delivery terms or returns, please review our <a href="/policies/shipping-policy">Shipping Policy</a> and <a href="/policies/refund-policy">Refund Policy</a>.</p>'
         ),
         'contact': (
-            f'<h2>Contact {name}</h2>\n'
             f'<p>We are here to assist you with any questions regarding orders, products, or shipping.</p>\n'
+            f'<h2>Customer Support</h2>\n'
             f'<ul>\n'
             f'  <li><strong>Email:</strong> {email_link}</li>\n'
             f'  <li><strong>Phone:</strong> {phone_link}</li>\n'
@@ -2155,7 +2156,8 @@ def standard_site_pages(business):
             f'<p>You can also track your orders directly using <a href="/pages/track-your-order">Track Your Order</a> or reach us via our <a href="/pages/contact">Contact Us</a> page.</p>'
         ),
         'faq': (
-            f'<h2>Frequently Asked Questions</h2>\n'
+            f'<p>Find quick answers to common questions about our products, shipping, returns, and ordering process.</p>\n'
+            f'<h2>Help & Ordering Support</h2>\n'
             f'<h3>How can I contact support?</h3>\n'
             f'<p>You can email us at {email_link} or call {phone_link}.</p>\n'
             f'<h3>What are your business hours?</h3>\n'
@@ -2166,9 +2168,8 @@ def standard_site_pages(business):
             f'<p>Please see our <a href="/policies/shipping-policy">Shipping Policy</a> and <a href="/policies/refund-policy">Refund Policy</a>. For general inquiries, visit <a href="/pages/contact">Contact Us</a>.</p>'
         ),
         'shipping': (
-            f'<h2>Shipping Policy</h2>\n'
             f'<p>At {name}, we provide clear and reliable shipping for all United States orders.</p>\n'
-            f'<h3>Shipping Cost & Timeframes</h3>\n'
+            f'<h2>Shipping Cost & Timeframes</h2>\n'
             f'<ul>\n'
             f'  <li><strong>Shipping Cost:</strong> Free United States standard shipping on all orders.</li>\n'
             f'  <li><strong>Processing Time:</strong> Orders are processed within 2 business days.</li>\n'
@@ -2178,9 +2179,8 @@ def standard_site_pages(business):
             f'<p>Once shipped, you will receive a tracking link. You can track your shipment at <a href="/pages/track-your-order">Track Your Order</a>. If you have questions, email {email_link} or visit <a href="/pages/contact">Contact Us</a>.</p>'
         ),
         'returns': (
-            f'<h2>Returns & Refunds Policy</h2>\n'
             f'<p>{name} strives for 100% customer satisfaction. Read our return terms below.</p>\n'
-            f'<h3>Return Conditions</h3>\n'
+            f'<h2>Return Conditions & Guidelines</h2>\n'
             f'<ul>\n'
             f'  <li><strong>Return Window:</strong> Items can be returned within 30 days of delivery.</li>\n'
             f'  <li><strong>Return Method:</strong> Contact customer support via mail or email before sending items.</li>\n'
@@ -2190,9 +2190,8 @@ def standard_site_pages(business):
             f'<p>Once your return is received and inspected, approved refunds will be processed to your original payment method within 5-7 business days. For assistance, email {email_link} or visit our <a href="/policies/refund-policy">Refund Policy</a> page.</p>'
         ),
         'privacy': (
-            f'<h2>Privacy Policy</h2>\n'
             f'<p>{name} respects your privacy. We collect personal information solely to process orders and improve customer service.</p>\n'
-            f'<h3>Information Collected</h3>\n'
+            f'<h2>Information Collection & Usage</h2>\n'
             f'<p>We collect details such as your name, shipping address, email address, and phone number when you place an order.</p>\n'
             f'<ul>\n'
             f'  <li><strong>Data Controller:</strong> {name}</li>\n'
@@ -2202,9 +2201,8 @@ def standard_site_pages(business):
             f'<p>If you have questions about our privacy practices, reach out to <strong>Email:</strong> {email_link} or visit <a href="/pages/contact">Contact Us</a>.</p>'
         ),
         'terms': (
-            f'<h2>Terms of Service</h2>\n'
             f'<p>Welcome to {name}. By visiting or placing an order at {domain}, you agree to our terms of service.</p>\n'
-            f'<h3>Store Usage & Policies</h3>\n'
+            f'<h2>Store Usage & Policies</h2>\n'
             f'<p>All orders are subject to product availability. Please review our <a href="/policies/shipping-policy">Shipping Policy</a>, <a href="/policies/refund-policy">Refund Policy</a>, and <a href="/policies/terms-of-sale">Terms of Sale</a>.</p>\n'
             f'<ul>\n'
             f'  <li><strong>Governing Law:</strong> United States</li>\n'
@@ -2214,8 +2212,8 @@ def standard_site_pages(business):
             f'<p>Contact us at {email_link} or phone {phone_link} for support.</p>'
         ),
         'contact_information': (
-            f'<h2>Contact Information</h2>\n'
             f'<p>Official customer support and contact details for {name}:</p>\n'
+            f'<h2>Company Contact Details</h2>\n'
             f'<ul>\n'
             f'  <li><strong>Legal Name:</strong> {name}</li>\n'
             f'  <li><strong>Email:</strong> {email_link}</li>\n'
@@ -2228,9 +2226,8 @@ def standard_site_pages(business):
             f'<p>Need help with your order? Visit <a href="/pages/contact">Contact Us</a> or track packages at <a href="/pages/track-your-order">Track Your Order</a>.</p>'
         ),
         'legal_notice': (
-            f'<h2>Legal Notice</h2>\n'
             f'<p>This website ({domain}) is operated by {name}.</p>\n'
-            f'<h3>Merchant Details</h3>\n'
+            f'<h2>Company Information</h2>\n'
             f'<ul>\n'
             f'  <li><strong>Company Name:</strong> {name}</li>\n'
             f'  <li><strong>Address:</strong> {address}</li>\n'
@@ -2241,9 +2238,8 @@ def standard_site_pages(business):
             f'<p>For operational policies, see our <a href="/policies/terms-of-service">Terms of Service</a> and <a href="/policies/privacy-policy">Privacy Policy</a>.</p>'
         ),
         'terms_of_sale': (
-            f'<h2>Terms of Sale</h2>\n'
             f'<p>These Terms of Sale govern all purchases made on {domain} through {name}.</p>\n'
-            f'<h3>Orders & Payment</h3>\n'
+            f'<h2>Orders & Payment Terms</h2>\n'
             f'<ul>\n'
             f'  <li><strong>Currency:</strong> Purchases are processed in {currency}.</li>\n'
             f'  <li><strong>Shipping:</strong> Free shipping is provided across the United States per our <a href="/policies/shipping-policy">Shipping Policy</a>.</li>\n'
@@ -2255,10 +2251,75 @@ def standard_site_pages(business):
     }
 
 
+def clean_duplicate_title_headings(title: str, body: str, business: dict = None) -> str:
+    body = (body or '').strip()
+    if not body or not title:
+        return body
+
+    business_name = (business or {}).get('business_name', '')
+
+    def normalize_str(s: str) -> str:
+        return re.sub(r'[\s\W_]+', '', s.lower())
+
+    norm_title = normalize_str(title)
+    targets = {norm_title}
+    if 'policy' in norm_title:
+        targets.add(norm_title.replace('policy', ''))
+    if 'terms' in norm_title:
+        targets.add(norm_title.replace('ofservice', '').replace('ofsale', ''))
+    if business_name:
+        norm_bname = normalize_str(business_name)
+        targets.add(norm_title + norm_bname)
+        targets.add(norm_bname + norm_title)
+        if 'about' in norm_title:
+            targets.add('about' + norm_bname)
+            targets.add('aboutus' + norm_bname)
+        if 'contact' in norm_title:
+            targets.add('contact' + norm_bname)
+            targets.add('contactus' + norm_bname)
+
+    # 1. Strip markdown headers or leading bold matching title
+    while True:
+        m = re.match(r'^\s*#+\s*([^\n]+)\n*', body)
+        if m:
+            heading_text = m.group(1).strip()
+            if normalize_str(heading_text) in targets:
+                body = body[m.end():].lstrip()
+                continue
+        m_bold = re.match(r'^\s*\*{2}([^\n*]+)\*{2}\s*\n*', body)
+        if m_bold:
+            heading_text = m_bold.group(1).strip()
+            if normalize_str(heading_text) in targets:
+                body = body[m_bold.end():].lstrip()
+                continue
+        break
+
+    # 2. Strip leading HTML headers matching title or any H1 at top of body
+    while True:
+        m_html = re.match(r'^\s*<h[1-3]\b[^>]*>(.*?)</h[1-3]>\s*', body, re.I | re.S)
+        if m_html:
+            raw_inside = re.sub(r'<[^>]+>', '', m_html.group(1)).strip()
+            if normalize_str(raw_inside) in targets or m_html.group(0).lower().startswith('<h1'):
+                body = body[m_html.end():].lstrip()
+                continue
+        m_p = re.match(r'^\s*<p\b[^>]*>\s*<strong>(.*?)</strong>\s*</p>\s*', body, re.I | re.S)
+        if m_p:
+            raw_inside = re.sub(r'<[^>]+>', '', m_p.group(1)).strip()
+            if normalize_str(raw_inside) in targets:
+                body = body[m_p.end():].lstrip()
+                continue
+        break
+
+    return body
+
+
 def format_and_link_brand_page(title: str, body: str, business: dict) -> str:
     body = (body or '').strip()
     if not body:
         return ''
+
+    # Clean any leading duplicate title headers before conversion
+    body = clean_duplicate_title_headings(title, body, business)
 
     email = str(business.get('email', '')).strip()
     phone = str(business.get('phone', '')).strip()
@@ -2281,10 +2342,7 @@ def format_and_link_brand_page(title: str, body: str, business: dict) -> str:
                 continue
             lines = [l.strip() for l in block.splitlines() if l.strip()]
 
-            if block.startswith('# '):
-                clean_h = html.escape(re.sub(r'^#+\s*', '', block))
-                html_blocks.append(f'<h1>{clean_h}</h1>')
-            elif block.startswith('## '):
+            if block.startswith('# ') or block.startswith('## '):
                 clean_h = html.escape(re.sub(r'^#+\s*', '', block))
                 html_blocks.append(f'<h2>{clean_h}</h2>')
             elif block.startswith('### '):
@@ -2307,10 +2365,10 @@ def format_and_link_brand_page(title: str, body: str, business: dict) -> str:
         body = '\n'.join(html_blocks)
     else:
         # Strip raw markdown headers if present inside HTML headings
-        body = re.sub(r'<h1>#+\s*(.*?)</h1>', r'<h1>\1</h1>', body, flags=re.I)
+        body = re.sub(r'<h1>#+\s*(.*?)</h1>', r'<h2>\1</h2>', body, flags=re.I)
         body = re.sub(r'<h2>#+\s*(.*?)</h2>', r'<h2>\1</h2>', body, flags=re.I)
         body = re.sub(r'<h3>#+\s*(.*?)</h3>', r'<h3>\1</h3>', body, flags=re.I)
-        body = re.sub(r'(?m)^#\s+(.*?)$', r'<h1>\1</h1>', body)
+        body = re.sub(r'(?m)^#\s+(.*?)$', r'<h2>\1</h2>', body)
         body = re.sub(r'(?m)^##\s+(.*?)$', r'<h2>\1</h2>', body)
         body = re.sub(r'(?m)^###\s+(.*?)$', r'<h3>\1</h3>', body)
 
@@ -2318,17 +2376,11 @@ def format_and_link_brand_page(title: str, body: str, business: dict) -> str:
     body = re.sub(r'\*\*([^*\n]+)\*\*', r'<strong>\1</strong>', body)
     body = re.sub(r'__([^_\n]+)__', r'<strong>\1</strong>', body)
 
-    # 1b. Ensure page has h1 title at top — inject if missing
-    if title and not re.search(r'<h1\b', body, re.I):
-        body = f'<h1>{html.escape(title)}</h1>\n' + body
+    # Demote any remaining H1 in body to H2 so the Shopify theme H1 remains the sole H1
+    body = re.sub(r'<h1\b([^>]*)>(.*?)</h1>', r'<h2\1>\2</h2>', body, flags=re.I | re.S)
 
-    # 1c. If body still has no h2/h3 after prior processing, inject a visible
-    #     section heading from the title so Shopify page sections are not flat.
-    if not re.search(r'<(?:h2|h3)\b', body, re.I):
-        # Find first <p> block and prepend with an h2 derived from title
-        if title and re.search(r'<p\b', body, re.I):
-            section_heading = f'<h2>{html.escape(title)}</h2>\n'
-            body = re.sub(r'(<p\b)', section_heading + r'\1', body, count=1, flags=re.I)
+    # Strip duplicate title headers from generated HTML
+    body = clean_duplicate_title_headings(title, body, business)
 
     # 2. Bold key labels
     label_patterns = [
@@ -2798,6 +2850,7 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
                     'Use the destination business name naturally and make the identity unmistakable. Do not invent '
                     'unsupported delivery promises, certifications, or fictional policies. Destination shipping is free within the United States. '
                     'Keep Live Chat and Business Hours exactly as supplied. '
+                    'TITLE REPETITION FORBIDDEN: Do NOT write or duplicate the page title (e.g. "About Us", "Shipping Policy") as an <h1>, <h2>, or heading at the beginning of the body. The Shopify store theme automatically renders the page title as an <h1> at the top of the page. Begin the body directly with the opening paragraph or first subsection heading (such as <h2>Our Mission</h2>, <h2>What We Believe</h2>, <h2>Shipping Overview</h2>). '
                     'FORMATTING REQUIREMENT: Use semantic HTML headings (<h2>, <h3>), bold labels (e.g. <strong>Shipping Cost:</strong>, <strong>Processing Time:</strong>, <strong>Email:</strong>, <strong>Phone:</strong>, <strong>Business Hours:</strong>), '
                     'proper <p> paragraphs and <ul>/<ol> bullet/numbered lists. '
                     'Link relevant phrases to destination store paths: href="/policies/shipping-policy", href="/policies/refund-policy", href="/pages/contact", href="/pages/track-your-order". '
@@ -3171,12 +3224,14 @@ async def prepare_page(page_id:int,request:Request):
     business=json.loads(store['business'])
     if not business.get('business_name') or not business.get('email'): fail('Add your business name and contact email before generating pages')
     prompt=('Draft a factual Shopify page. Use only the merchant facts below. Do not invent policy terms, timelines, addresses, guarantees, or legal claims. '
+            'Do NOT repeat or duplicate the page title as an <h1> or <h2> heading at the beginning of the body, as the Shopify theme already renders the H1 title. '
             'For missing material facts, write [MERCHANT TO CONFIRM: item]. Return JSON only with title and body. Plain text body, short paragraphs. '
             f'Page type: {page["kind"]}; title: {page["title"]}; facts: {json.dumps(business)}')
     result=await ai_json(prompt)
     title=str(result.get('title','')).strip()[:150]
     body=str(result.get('body','')).strip()[:12000]
     if not title or not body: fail('AI did not return page content',502)
+    body = format_and_link_brand_page(title, body, business)
     with db() as c:
         c.execute("UPDATE pages SET title=?,body=?,status=?,reviewed_hash=?,brand_guard='' WHERE id=?",(title,body,'draft','',page_id))
         event(c,1,f'AI prepared page: {title}')
