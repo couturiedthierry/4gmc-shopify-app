@@ -60,9 +60,19 @@ import mcp_server
 import mcp_oauth
 app.include_router(mcp_server.router)
 app.include_router(mcp_oauth.router)
+def has_ai_configured() -> bool:
+    return bool(
+        os.environ.get('NVIDIA_API_KEY', '').strip() or NVIDIA_API_KEY or
+        os.environ.get('GEMINI_API_KEY', '').strip() or GEMINI_API_KEY or
+        os.environ.get('GEMINI_API_KEY2', '').strip() or GEMINI_API_KEY2 or
+        os.environ.get('SMARTAPI_KEY', '').strip() or SMARTAPI_KEY
+    )
 
-
-
+def has_image_configured() -> bool:
+    return bool(
+        os.environ.get('GEMINI_API_KEY', '').strip() or GEMINI_API_KEY or
+        os.environ.get('GEMINI_API_KEY2', '').strip() or GEMINI_API_KEY2
+    )
 @app.middleware('http')
 async def prevent_stale_dashboard_assets(request: Request, call_next):
     response = await call_next(request)
@@ -604,7 +614,7 @@ async def generate_storefront(request: Request):
         product_data = [{'id': product['id'], 'title': product['title'],
                          'price': product['price'], 'image_url': product['ai_image_url']}
                         for product in products]
-    if not (NVIDIA_API_KEY or GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY):
+    if not has_ai_configured():
         fail('Configure an AI API key (NVIDIA_API_KEY, GEMINI_API_KEY, or SMARTAPI_KEY) before generating the storefront')
     prompt = (
         'Write truthful homepage copy for this ecommerce store. Return JSON only with headline '
@@ -853,9 +863,9 @@ def state(request: Request):
         'jobs': all_store_jobs(),
         'task_capacity': task_capacity_value(),
         'findings': issues(store, products, pages),
-        'ai_connected': bool(NVIDIA_API_KEY or GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY),
+        'ai_connected': has_ai_configured(),
         'shopify_ready': bool(client_id and client_secret and FERNET and PUBLIC_URL.startswith('https://')),
-        'image_connected': bool(GEMINI_API_KEY or GEMINI_API_KEY2),
+        'image_connected': has_image_configured(),
         'gmc_connected': False,
         'mcp_url': mcp_endpoint,
         'mcp_connected': True,
@@ -1466,55 +1476,98 @@ async def ai_json(prompt, max_tokens=700):
                                 return json.loads(match.group())
                             except ValueError:
                                 pass
-                except Exception:
-                    pass
-        except Exception:
-            # Fall back to Gemini or SmartAPI if NVIDIA times out or encounters error
-            pass
+                except Exception as parse_err:
+                    print(f"[NVIDIA AI] Response parse error: {parse_err}")
+            else:
+                print(f"[NVIDIA AI] HTTP {response.status_code}: {response.text[:200]}")
+        except Exception as nv_err:
+            print(f"[NVIDIA AI] Connection error: {nv_err}")
 
     gemini_errors = []
     if gemini_keys:
-        models = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite']
-        headers = {'Content-Type': 'application/json'}
-        payload = {
-            'contents': [{'parts': [{'text': prompt}]}],
-            'generationConfig': {
-                'temperature': 0.2,
-                'maxOutputTokens': max_tokens,
-                'responseMimeType': 'application/json'
-            }
-        }
+        models = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-flash-lite-latest']
         for g_key in gemini_keys:
             key_failed = False
             for model in models:
-                url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={g_key}'
+                # 2a. Primary: Google Gemini Interactions API (official unified endpoint)
                 try:
+                    interactions_headers = {
+                        'Content-Type': 'application/json',
+                        'x-goog-api-key': g_key
+                    }
+                    interactions_payload = {
+                        'model': model,
+                        'input': prompt,
+                        'generation_config': {
+                            'temperature': 0.2,
+                            'max_output_tokens': max_tokens
+                        }
+                    }
                     async with httpx.AsyncClient(timeout=90, follow_redirects=False) as client:
-                        response = await client.post(url, headers=headers, json=payload)
-                    if response.status_code == 200:
+                        resp = await client.post(
+                            'https://generativelanguage.googleapis.com/v1beta/interactions',
+                            headers=interactions_headers,
+                            json=interactions_payload
+                        )
+                    if resp.status_code == 200:
                         try:
-                            data = response.json()
+                            data = resp.json()
                         except ValueError:
-                            fail('AI service returned an invalid response', 502)
-                        candidates = data.get('candidates', [])
-                        if candidates and isinstance(candidates, list):
-                            parts = candidates[0].get('content', {}).get('parts', [])
-                            answer = ''.join(p.get('text', '') for p in parts if isinstance(p, dict)).strip()
+                            data = {}
+                        answer = ''
+                        for step in data.get('steps', []):
+                            if step.get('type') == 'model_output':
+                                for part in step.get('content', []):
+                                    if isinstance(part, dict) and part.get('type') == 'text' and 'text' in part:
+                                        answer += part['text']
+                        if answer:
                             match = re.search(r'\{.*\}', answer, re.S)
                             if match:
                                 try:
                                     return json.loads(match.group())
                                 except ValueError:
                                     pass
-                    elif response.status_code in (401, 403):
+                    elif resp.status_code in (401, 403):
                         key_failed = True
                         break
                     else:
-                        try:
-                            err_detail = response.json().get('error', {}).get('message', response.text[:150])
-                        except Exception:
-                            err_detail = response.text[:150]
-                        gemini_errors.append(f'{model}: HTTP {response.status_code} ({err_detail})')
+                        # 2b. Secondary fallback: Google Gemini generateContent REST endpoint
+                        gc_headers = {'Content-Type': 'application/json'}
+                        gc_payload = {
+                            'contents': [{'parts': [{'text': prompt}]}],
+                            'generationConfig': {
+                                'temperature': 0.2,
+                                'maxOutputTokens': max_tokens,
+                                'responseMimeType': 'application/json'
+                            }
+                        }
+                        gc_url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={g_key}'
+                        async with httpx.AsyncClient(timeout=90, follow_redirects=False) as gc_client:
+                            gc_resp = await gc_client.post(gc_url, headers=gc_headers, json=gc_payload)
+                        if gc_resp.status_code == 200:
+                            try:
+                                gc_data = gc_resp.json()
+                            except ValueError:
+                                gc_data = {}
+                            candidates = gc_data.get('candidates', [])
+                            if candidates and isinstance(candidates, list):
+                                parts = candidates[0].get('content', {}).get('parts', [])
+                                gc_ans = ''.join(p.get('text', '') for p in parts if isinstance(p, dict)).strip()
+                                match = re.search(r'\{.*\}', gc_ans, re.S)
+                                if match:
+                                    try:
+                                        return json.loads(match.group())
+                                    except ValueError:
+                                        pass
+                        elif gc_resp.status_code in (401, 403):
+                            key_failed = True
+                            break
+                        else:
+                            try:
+                                err_detail = gc_resp.json().get('error', {}).get('message', gc_resp.text[:150])
+                            except Exception:
+                                err_detail = gc_resp.text[:150]
+                            gemini_errors.append(f'{model}: HTTP {gc_resp.status_code} ({err_detail})')
                 except httpx.TimeoutException:
                     fail('Gemini API took too long to respond. Page generation can be retried safely.', 504)
                 except httpx.RequestError as req_err:
@@ -2657,7 +2710,7 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
         missing = [key.replace('_', ' ') for key in required if not str(business.get(key, '')).strip()]
         if missing:
             fail('Complete these Business & brand fields first: ' + ', '.join(missing))
-        if not (NVIDIA_API_KEY or GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY):
+        if not has_ai_configured():
             fail('Configure an AI API key (NVIDIA_API_KEY, GEMINI_API_KEY, or SMARTAPI_KEY) in environment variables before generating brand pages')
         if progress:
             progress('Reading the reference policies and public pages…', 0, 0)
@@ -2994,9 +3047,9 @@ async def start_catalog_job(data: CatalogInput, request: Request):
         brand = json.loads(store['brand'] or '{}')
         if not isinstance(brand.get('logo'), dict):
             fail('Upload this store logo before generating branded product images')
-        if not (NVIDIA_API_KEY or GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY):
+        if not has_ai_configured():
             fail('Configure an AI API key (NVIDIA_API_KEY, GEMINI_API_KEY, or SMARTAPI_KEY) before generating product copy')
-        if not (GEMINI_API_KEY or GEMINI_API_KEY2):
+        if not has_image_configured():
             fail('Configure Gemini before generating product images')
         job_id = uuid.uuid4().hex
         c.execute(

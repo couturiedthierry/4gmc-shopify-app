@@ -77,16 +77,56 @@ async def test_ai_json_with_nvidia():
         assert result.get("status") == "active"
         print(f"[OK] server.ai_json successfully verified via NVIDIA contract: {result}")
 
+async def test_ai_json_with_gemini_interactions():
+    prompt = 'Return JSON only: {"source": "gemini_interactions", "ok": true}'
+    real_gemini = server.GEMINI_API_KEY or os.environ.get('GEMINI_API_KEY', '')
+    if real_gemini:
+        print("[*] Calling server.ai_json with live Gemini Interactions API...")
+        with patch.object(server, 'NVIDIA_API_KEY', ''):
+            res = await server.ai_json(prompt, max_tokens=150)
+            assert isinstance(res, dict)
+            assert res.get("ok") is True or "source" in res
+            print(f"[OK] server.ai_json successfully verified with live Gemini Interactions API: {res}")
+            return
+
+    # In CI / mock environment, verify contract via simulated Interactions API response
+    print("[*] Verifying server.ai_json Gemini Interactions API contract with mock transport...")
+    mock_interactions_payload = {
+        "id": "v1_mock_test_interaction",
+        "status": "completed",
+        "steps": [
+            {
+                "type": "model_output",
+                "content": [{"type": "text", "text": '{"source": "gemini_interactions", "ok": true}'}]
+            }
+        ]
+    }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = mock_interactions_payload
+    mock_resp.text = json.dumps(mock_interactions_payload)
+
+    with patch.object(server, 'NVIDIA_API_KEY', ''), \
+         patch.object(server, 'GEMINI_API_KEY', 'test-gemini-key'), \
+         patch('httpx.AsyncClient.post', return_value=mock_resp):
+        res = await server.ai_json(prompt, max_tokens=150)
+        assert isinstance(res, dict)
+        assert res.get("source") == "gemini_interactions"
+        assert res.get("ok") is True
+        print(f"[OK] server.ai_json successfully verified via Gemini Interactions contract: {res}")
+
 def main():
     print("\n==========================================")
-    print("   Running 4GMC NVIDIA AI Integration Tests")
+    print("   Running 4GMC AI Provider Tests (NVIDIA & Gemini Interactions)")
     print("==========================================\n")
     test_nvidia_environment_configured()
     test_ai_connected_text_only_contract()
     asyncio.run(test_ai_json_with_nvidia())
+    asyncio.run(test_ai_json_with_gemini_interactions())
     print("\n==========================================")
-    print("   ALL NVIDIA AI INTEGRATION TESTS PASSED!")
+    print("   ALL AI PROVIDER INTEGRATION TESTS PASSED!")
     print("==========================================\n")
 
 if __name__ == '__main__':
     main()
+
