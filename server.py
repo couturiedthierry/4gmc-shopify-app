@@ -11,6 +11,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse
 import httpx
 import shopify_usa as usa
 import site_kit
+from static_pages.generator import generate_static_page
 import image_pipeline
 import catalog_rules
 import product_source
@@ -2831,7 +2832,7 @@ def validate_brand_page(item, title, body, business, source_host, identities):
 
 
 async def generate_site_kit(data: SiteKitInput, progress=None):
-    from static_pages.generator import generate_static_page
+    
     import uuid, hashlib, json
     
     async with site_kit_lock():
@@ -3182,7 +3183,7 @@ def update_page(page_id:int,data:PageInput,request:Request):
 
 @app.post('/api/pages/{page_id}/prepare')
 async def prepare_page(page_id:int,request:Request):
-    from static_pages.generator import generate_static_page
+    
     require(request)
     with db() as c:
         page=c.execute('SELECT * FROM pages WHERE id=? AND store_id=1',(page_id,)).fetchone()
