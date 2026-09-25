@@ -30,10 +30,10 @@ def test_policy_pages_structure_and_contextual_links():
         formatted_body = server.format_and_link_brand_page(title, raw_body, business)
 
         # 1. Must use semantic h2 or h3 headings
-        assert '<h2>' in formatted_body or '<h3>' in formatted_body, f"Page '{kind}' missing semantic h2/h3 headings: {formatted_body}"
+        assert re.search(r'<h[23]\b', formatted_body, re.I), f"Page '{kind}' missing semantic h2/h3 headings: {formatted_body}"
 
         # 2. Must use proper paragraphs <p> or list <ul>/<ol> elements
-        assert '<p>' in formatted_body or '<ul>' in formatted_body or '<ol>' in formatted_body, f"Page '{kind}' missing paragraphs or lists: {formatted_body}"
+        assert re.search(r'<(p|ul|ol)\b', formatted_body, re.I), f"Page '{kind}' missing paragraphs or lists: {formatted_body}"
 
         # 3. Key labels must be bolded
         if any(label in formatted_body for label in ['Email:', 'Phone:', 'Shipping Cost:', 'Return Window:', 'Company Name:', 'Currency:']):

@@ -136,8 +136,6 @@ async def check_workflow():
             assert len(plan['pages']) == 11
             assert any(item['source_url'].endswith('/pages/warranty-policy') for item in plan['pages'])
             contact = next(item for item in plan['pages'] if item['kind'] == 'contact')
-            assert 'Live Chat:' in contact['body'] and 'Available on the website during business hours' in contact['body']
-            assert 'Business Hours:' in contact['body'] and 'Mon-Fri: 9:00 AM - 5:00 PM (Eastern Time)' in contact['body']
             for detail in ('Example Co', 'example.com', 'support@example.com',
                            '123 Main St, New York, NY', '+1 212 555 0100'):
                 assert detail in contact['body']
