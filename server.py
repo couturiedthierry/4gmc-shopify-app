@@ -34,6 +34,9 @@ ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
 SMARTAPI_KEY = os.environ.get('SMARTAPI_KEY', '')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 GEMINI_API_KEY2 = os.environ.get('GEMINI_API_KEY2', '')
+NVIDIA_API_KEY = os.environ.get('NVIDIA_API_KEY', '')
+NVIDIA_MODEL = os.environ.get('NVIDIA_MODEL', 'meta/llama-3.2-11b-vision-instruct')
+NVIDIA_BASE_URL = os.environ.get('NVIDIA_BASE_URL', 'https://integrate.api.nvidia.com/v1').rstrip('/')
 SHOPIFY_CLIENT_ID = os.environ.get('SHOPIFY_CLIENT_ID', '')
 SHOPIFY_CLIENT_SECRET = os.environ.get('SHOPIFY_CLIENT_SECRET', '')
 PUBLIC_URL = os.environ.get('PUBLIC_URL', 'http://localhost:8000').rstrip('/')
@@ -601,8 +604,8 @@ async def generate_storefront(request: Request):
         product_data = [{'id': product['id'], 'title': product['title'],
                          'price': product['price'], 'image_url': product['ai_image_url']}
                         for product in products]
-    if not (GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY):
-        fail('Configure Gemini before generating the storefront')
+    if not (NVIDIA_API_KEY or GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY):
+        fail('Configure an AI API key (NVIDIA_API_KEY, GEMINI_API_KEY, or SMARTAPI_KEY) before generating the storefront')
     prompt = (
         'Write truthful homepage copy for this ecommerce store. Return JSON only with headline '
         '(up to 70 characters) and intro (up to 180 characters). Do not invent delivery speeds, '
@@ -850,7 +853,7 @@ def state(request: Request):
         'jobs': all_store_jobs(),
         'task_capacity': task_capacity_value(),
         'findings': issues(store, products, pages),
-        'ai_connected': bool(GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY),
+        'ai_connected': bool(NVIDIA_API_KEY or GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY),
         'shopify_ready': bool(client_id and client_secret and FERNET and PUBLIC_URL.startswith('https://')),
         'image_connected': bool(GEMINI_API_KEY or GEMINI_API_KEY2),
         'gmc_connected': False,
@@ -1421,6 +1424,10 @@ def reset_all_products(request: Request):
     return {'ok': True}
 
 async def ai_json(prompt, max_tokens=700):
+    nvidia_key = (os.environ.get('NVIDIA_API_KEY', '') or NVIDIA_API_KEY).strip()
+    nvidia_model = (os.environ.get('NVIDIA_MODEL', '') or NVIDIA_MODEL).strip() or 'meta/llama-3.2-11b-vision-instruct'
+    nvidia_base_url = (os.environ.get('NVIDIA_BASE_URL', '') or NVIDIA_BASE_URL).strip().rstrip('/') or 'https://integrate.api.nvidia.com/v1'
+
     gemini_keys = []
     for k in (os.environ.get('GEMINI_API_KEY2', ''), os.environ.get('GEMINI_API_KEY', ''), GEMINI_API_KEY2, GEMINI_API_KEY):
         clean = str(k or '').strip()
@@ -1428,8 +1435,42 @@ async def ai_json(prompt, max_tokens=700):
             gemini_keys.append(clean)
     smart_key = (os.environ.get('SMARTAPI_KEY', '') or SMARTAPI_KEY).strip()
 
-    if not (gemini_keys or smart_key):
-        fail('Configure the Gemini API key in environment variables', 502)
+    if not (nvidia_key or gemini_keys or smart_key):
+        fail('Configure an AI API key (NVIDIA_API_KEY, GEMINI_API_KEY, or SMARTAPI_KEY) in environment variables', 502)
+
+    # 1. NVIDIA API Provider (Fast text completion for policies, copy, and site kit)
+    if nvidia_key:
+        nv_headers = {
+            'Authorization': f'Bearer {nvidia_key}',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        }
+        nv_payload = {
+            'model': nvidia_model,
+            'messages': [{'role': 'user', 'content': prompt}],
+            'temperature': 0.2,
+            'max_tokens': max_tokens
+        }
+        try:
+            async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
+                response = await client.post(f'{nvidia_base_url}/chat/completions', headers=nv_headers, json=nv_payload)
+            if response.status_code == 200:
+                try:
+                    nv_data = response.json()
+                    choices = nv_data.get('choices', [])
+                    if choices and isinstance(choices, list):
+                        answer = str(choices[0].get('message', {}).get('content') or '').strip()
+                        match = re.search(r'\{.*\}', answer, re.S)
+                        if match:
+                            try:
+                                return json.loads(match.group())
+                            except ValueError:
+                                pass
+                except Exception:
+                    pass
+        except Exception:
+            # Fall back to Gemini or SmartAPI if NVIDIA times out or encounters error
+            pass
 
     gemini_errors = []
     if gemini_keys:
@@ -1518,7 +1559,7 @@ async def ai_json(prompt, max_tokens=700):
     if gemini_errors:
         fail(f'Google Gemini API error: {gemini_errors[0]}', 502)
 
-    fail('AI request failed. Please check your Gemini API key (starts with AIzaSy) or SmartAPI key.', 502)
+    fail('AI request failed. Please check your NVIDIA_API_KEY, Gemini API key, or SmartAPI key.', 502)
 
 @app.post('/api/products/{product_id}/prepare')
 async def prepare_product(product_id:int,request:Request):
@@ -2572,8 +2613,8 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
         missing = [key.replace('_', ' ') for key in required if not str(business.get(key, '')).strip()]
         if missing:
             fail('Complete these Business & brand fields first: ' + ', '.join(missing))
-        if not (GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY):
-            fail('Configure the Gemini API key (GEMINI_API_KEY2 or GEMINI_API_KEY) in environment variables before generating brand pages')
+        if not (NVIDIA_API_KEY or GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY):
+            fail('Configure an AI API key (NVIDIA_API_KEY, GEMINI_API_KEY, or SMARTAPI_KEY) in environment variables before generating brand pages')
         if progress:
             progress('Reading the reference policies and public pages…', 0, 0)
         try:
@@ -2893,8 +2934,8 @@ async def start_catalog_job(data: CatalogInput, request: Request):
         brand = json.loads(store['brand'] or '{}')
         if not isinstance(brand.get('logo'), dict):
             fail('Upload this store logo before generating branded product images')
-        if not (GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY):
-            fail('Configure Gemini before generating product copy')
+        if not (NVIDIA_API_KEY or GEMINI_API_KEY2 or GEMINI_API_KEY or SMARTAPI_KEY):
+            fail('Configure an AI API key (NVIDIA_API_KEY, GEMINI_API_KEY, or SMARTAPI_KEY) before generating product copy')
         if not (GEMINI_API_KEY or GEMINI_API_KEY2):
             fail('Configure Gemini before generating product images')
         job_id = uuid.uuid4().hex

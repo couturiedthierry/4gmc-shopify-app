@@ -28,6 +28,10 @@ services:
         sync: false
       - key: SHOPIFY_CLIENT_SECRET
         sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: NVIDIA_MODEL
+        sync: false
     disk:
       name: 4gmc-data
       mountPath: /app/data
