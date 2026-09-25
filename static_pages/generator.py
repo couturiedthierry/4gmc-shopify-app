@@ -1,5 +1,5 @@
-from static_pages.context import build_store_context, select_variant, render_template
-import static_pages.templates as templates
+from .context import build_store_context, select_variant, render_template
+from . import templates
 
 PAGE_KINDS = {
     'about_us': templates.ABOUT_US,
