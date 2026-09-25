@@ -1461,27 +1461,29 @@ async def ai_json(prompt, max_tokens=700):
             'temperature': 0.2,
             'max_tokens': max_tokens
         }
-        try:
-            async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
-                response = await client.post(f'{nvidia_base_url}/chat/completions', headers=nv_headers, json=nv_payload)
-            if response.status_code == 200:
-                try:
-                    nv_data = response.json()
-                    choices = nv_data.get('choices', [])
-                    if choices and isinstance(choices, list):
-                        answer = str(choices[0].get('message', {}).get('content') or '').strip()
-                        match = re.search(r'\{.*\}', answer, re.S)
-                        if match:
-                            try:
-                                return json.loads(match.group())
-                            except ValueError:
-                                pass
-                except Exception as parse_err:
-                    print(f"[NVIDIA AI] Response parse error: {parse_err}")
-            else:
-                print(f"[NVIDIA AI] HTTP {response.status_code}: {response.text[:200]}")
-        except Exception as nv_err:
-            print(f"[NVIDIA AI] Connection error: {nv_err}")
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
+                    response = await client.post(f'{nvidia_base_url}/chat/completions', headers=nv_headers, json=nv_payload)
+                if response.status_code == 200:
+                    try:
+                        nv_data = response.json()
+                        choices = nv_data.get('choices', [])
+                        if choices and isinstance(choices, list):
+                            answer = str(choices[0].get('message', {}).get('content') or '').strip()
+                            match = re.search(r'\{.*\}', answer, re.S)
+                            if match:
+                                try:
+                                    return json.loads(match.group())
+                                except ValueError as e:
+                                    print(f"[NVIDIA AI] JSON decode error (attempt {attempt+1}): {e}. Output: {answer[:200]}")
+                    except Exception as parse_err:
+                        print(f"[NVIDIA AI] Response parse error: {parse_err}")
+                else:
+                    print(f"[NVIDIA AI] HTTP {response.status_code}: {response.text[:200]}")
+            except Exception as nv_err:
+                print(f"[NVIDIA AI] Connection error: {nv_err}")
+                break
 
     gemini_errors = []
     if gemini_keys:
