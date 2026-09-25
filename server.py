@@ -11,7 +11,16 @@ from urllib.parse import parse_qsl, urlencode, urlparse
 import httpx
 import shopify_usa as usa
 import site_kit
-from static_pages.generator import generate_static_page
+try:
+    from static_pages.generator import generate_static_page
+    STATIC_PAGES_ERROR = None
+except Exception as e:
+    import traceback
+    STATIC_PAGES_ERROR = traceback.format_exc()
+    # Provide a dummy function so the rest of the file compiles
+    def generate_static_page(*args, **kwargs):
+        raise RuntimeError(f"Failed to load static_pages: {STATIC_PAGES_ERROR}")
+
 import image_pipeline
 import catalog_rules
 import product_source
@@ -2946,7 +2955,7 @@ async def run_site_kit_job(job_id, store_id, data):
         with db() as c:
             event(c, 1, 'Page generation failed: ' + message[:300])
     except Exception as error:
-        message = f'Page generation stopped unexpectedly ({type(error).__name__}). Check the Render logs and retry.'
+        message = f'Page generation stopped unexpectedly ({type(error).__name__}: {error}). Check the Render logs and retry.'
         print(f'Site-kit job {job_id} failed: {type(error).__name__}: {error}', flush=True)
         update_site_kit_job(job_id, 'failed', 'Page generation stopped.', completed, total, error=message)
         with db() as c:

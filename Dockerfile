@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY *.py ./
 COPY static ./static
+COPY static_pages ./static_pages
 
 RUN mkdir -p /app/data
 
