@@ -2091,37 +2091,50 @@ def site_kit_rows(c):
 
 def site_kit_plan(c):
     store = store_row(c)
-    if not store['policy_source_url']:
-        fail('Enter a source store and prepare its pages first')
-    facts_hash = business_identity_hash(json.loads(store['business']))
-    if store['site_kit_facts_hash'] != facts_hash:
-        fail('Business details changed. Prepare the pages and policies again before publishing.', 409)
-    ids = json.loads(store['site_kit_page_ids'])
-    if not ids:
-        legacy = site_kit_rows(c)
-        ids = [legacy[kind]['id'] for kind in SITE_KIT_ORDER if kind in legacy]
-    rows = []
-    for page_id in ids:
-        row = c.execute('SELECT * FROM pages WHERE id=? AND store_id=1', (page_id,)).fetchone()
-        if not row:
-            fail('A prepared page is missing. Prepare the source store again.', 409)
-        rows.append(row)
-    if len(rows) < 10:
-        fail('The complete source page and policy set has not been prepared')
+    rows = c.execute('SELECT * FROM pages WHERE store_id=? ORDER BY id DESC', (store['id'],)).fetchall()
+    
+    target_kinds = [
+        'shipping', 'returns', 'privacy', 'terms', 'contact_information', 
+        'legal_notice', 'contact', 'faq', 'about_us', 
+        'cancellation_policy', 'warranty_policy'
+    ]
+    
+    by_kind = {}
     for row in rows:
+        if row['kind'] in target_kinds and row['kind'] not in by_kind:
+            by_kind[row['kind']] = row
+            
+    final_rows = [by_kind[k] for k in target_kinds if k in by_kind]
+    
+    if len(final_rows) < 11:
+        fail('The complete brand pages and policies set has not been generated yet.')
+        
+    facts_hash = business_identity_hash(json.loads(store['business']))
+    
+    for row in final_rows:
         try:
             guard = json.loads(row['brand_guard'])
         except (json.JSONDecodeError, TypeError):
             guard = {}
-        if row['source_url'] and guard.get('version') != 2:
-            fail('These pages were prepared with the old copy workflow. Generate brand pages again before publishing.', 409)
-    snapshot = [store['domain'], store['policy_source_url'], store['business']]
-    snapshot += [[row['id'], row['kind'], row['source_handle'], row['brand_guard'], page_digest(row)] for row in rows]
+            
+        if guard.get('version') != 3:
+            fail('These pages were prepared with the old workflow. Generate brand pages again before publishing.', 409)
+            
+        if guard.get('identity_hash') != facts_hash:
+            fail('Business details changed. Generate the pages and policies again before publishing.', 409)
+
+    snapshot = [store['domain'], store['business']]
+    snapshot += [[row['id'], row['kind'], row['title'], page_digest(row)] for row in final_rows]
     fingerprint = hashlib.sha256(json.dumps(snapshot, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
-    return {'fingerprint': fingerprint, 'source_url': store['policy_source_url'],
-            'pages': [{'id': row['id'], 'kind': row['kind'], 'title': row['title'],
-                       'body': row['body'], 'status': row['status'],
-                       'source_url': row['source_url']} for row in rows]}
+    
+    return {
+        'fingerprint': fingerprint,
+        'source_url': '',
+        'pages': [{'id': row['id'], 'kind': row['kind'], 'title': row['title'],
+                   'body': row['body'], 'status': row['status'],
+                   'source_url': row['source_url']} for row in final_rows]
+    }
+
 def build_contact_page_html(business: dict, brand: dict = None) -> str:
     name = html.escape(str(business.get('business_name', '')).strip() or 'Our Store')
     email = html.escape(str(business.get('email', '')).strip())
