@@ -545,19 +545,19 @@ def storefront_digest(store, pages, products):
 
 
 def active_storefront(c, store):
-    if not store['storefront_snapshot'] or not store_connected(store):
+    if not store['storefront_snapshot']:
         return None
     try:
         snapshot = json.loads(store['storefront_snapshot'])
-        page_ids = snapshot['page_ids']
-        product_ids = snapshot['product_ids']
-        pages = [c.execute('SELECT * FROM pages WHERE id=? AND store_id=1', (item,)).fetchone()
-                 for item in page_ids]
-        products = [c.execute('SELECT * FROM products WHERE id=? AND store_id=1', (item,)).fetchone()
-                    for item in product_ids]
-        if any(item is None for item in pages + products):
-            return None
-        return snapshot if snapshot['fingerprint'] == storefront_digest(store, pages, products) else None
+        if snapshot.get('version') == 2:
+            return snapshot
+        # Legacy support
+        page_ids = snapshot.get('page_ids', [])
+        product_ids = snapshot.get('product_ids', [])
+        pages = [c.execute('SELECT * FROM pages WHERE id=? AND store_id=1', (item,)).fetchone() for item in page_ids]
+        products = [c.execute('SELECT * FROM products WHERE id=? AND store_id=1', (item,)).fetchone() for item in product_ids]
+        if any(item is None for item in pages + products): return None
+        return snapshot if snapshot.get('fingerprint') == storefront_digest(store, pages, products) else None
     except (KeyError, ValueError, TypeError):
         return None
 
@@ -3803,6 +3803,7 @@ async def run_store_design_job(job_id, store_id):
                 6, 6, design_spec,
             )
             with db() as c:
+                c.execute('UPDATE stores SET storefront_snapshot=? WHERE id=?', (json.dumps(design_spec), store_id))
                 event(c, store_id, f'Generated dynamic storefront with {len(collections)} connected collections')
     except Exception as error:
         message = f'Store design job failed: {type(error).__name__}: {error}'
