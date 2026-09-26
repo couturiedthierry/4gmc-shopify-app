@@ -3920,18 +3920,15 @@ async def publish_store(request: Request):
     required_legal = ['Contact Information', 'Legal Notice', 'Terms of Sale']
     
     missing = []
-    generated_titles = [p['title'].lower() for p in pages]
+    generated_pages = [p['title'].lower() for p in pages if p['kind'] in ('page', 'policy')]
+    generated_settings = [p['title'].lower() for p in pages if p['kind'] == 'legal_setting']
     
     for req in required_pages:
-        if req.lower() not in generated_titles:
+        if req.lower() not in generated_pages:
             missing.append(f"Page: {req}")
             
     for req in required_legal:
-        if req.lower() == 'contact information' and 'contact us' not in generated_titles:
-            missing.append(f"Legal Setting: {req}")
-        elif req.lower() == 'legal notice' and 'legal notice' not in generated_titles:
-            missing.append(f"Legal Setting: {req}")
-        elif req.lower() == 'terms of sale' and 'terms of service' not in generated_titles:
+        if req.lower() not in generated_settings:
             missing.append(f"Legal Setting: {req}")
             
     if missing:
@@ -3981,7 +3978,16 @@ async def publish_store(request: Request):
                 target = data['stagedTargets'][0]
                 target_url = target['url']
                 resource_url = target['resourceUrl']
-                # Perform the HTTP POST to target_url with parameters (mocked here for brevity, requires httpx Multipart)
+                
+                import httpx
+                file_path = os.path.join('data/product-images', filename)
+                with open(file_path, 'rb') as img_f:
+                    files = {'file': (filename, img_f, mime_type)}
+                    data_params = {p['name']: p['value'] for p in target['parameters']}
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.post(target_url, data=data_params, files=files)
+                        if resp.status_code >= 400:
+                            fail(f"Staging upload failed: {resp.text}", 500)
                 logs.append(f"   -> [HTTP POST] Uploaded file bytes to {target_url}")
             else:
                 logs.append("   -> [DRY RUN] Skipped real HTTP POST to staging.")
@@ -4016,9 +4022,9 @@ async def publish_store(request: Request):
         main_theme = next((t for t in themes if t['role'] == 'MAIN'), None)
         if not main_theme: fail("No main theme found", 500)
         logs.append(f"Found MAIN theme: {main_theme['name']} ({main_theme['id']})")
-        # Duplicate theme logic (REST fallback since GraphQL lacks themeDuplicate)
         logs.append("[REST] Duplicating main theme to UNPUBLISHED role...")
-        # dup_res = await shopify_rest(domain, token, 'POST', 'themes.json', {"theme": {"name": "4GMC Staging", "src": main_theme['id'].split('/')[-1]}})
+        dup_res = await shopify_rest(domain, token, 'POST', 'themes.json', {"theme": {"name": "4GMC Staging Theme", "src": main_theme['id'].split('/')[-1]}})
+        logs.append(f"Successfully created unpublished duplicate theme ID: {dup_res.get('theme', {}).get('id')}")
     else:
         logs.append("   -> [DRY RUN] Found mock MAIN theme. Skipped duplication.")
         
@@ -4037,7 +4043,14 @@ async def publish_store(request: Request):
     if is_eligible:
         logs.append("[GraphQL] Executing checkoutBrandingUpsert mutation...")
         if not DRY_RUN:
-            pass # execute mutation
+            checkout_mutation = """mutation checkoutBrandingUpsert($checkoutBrandingInput: CheckoutBrandingInput!) {
+              checkoutBrandingUpsert(checkoutBrandingInput: $checkoutBrandingInput) {
+                checkoutBranding { designSystem { colors { global { brand } } } }
+                userErrors { field message }
+              }
+            }"""
+            c_vars = {"checkoutBrandingInput": {"designSystem": {"colors": {"global": {"brand": "#000000"}}}}}
+            await shopify_graphql(domain, token, checkout_mutation, c_vars)
     else:
         logs.append("Checkout Branding Skipped: Automatic placement unavailable (Store is not Shopify Plus or Development).")
         logs.append("Manual Setup: Go to Shopify Admin > Settings > Checkout > Customize to upload your logo.")
@@ -4062,18 +4075,15 @@ async def publish_store(request: Request):
     required_legal = ['Contact Information', 'Legal Notice', 'Terms of Sale']
     
     missing = []
-    generated_titles = [p['title'].lower() for p in pages]
+    generated_pages = [p['title'].lower() for p in pages if p['kind'] in ('page', 'policy')]
+    generated_settings = [p['title'].lower() for p in pages if p['kind'] == 'legal_setting']
     
     for req in required_pages:
-        if req.lower() not in generated_titles:
+        if req.lower() not in generated_pages:
             missing.append(f"Page: {req}")
             
     for req in required_legal:
-        if req.lower() == 'contact information' and 'contact us' not in generated_titles:
-            missing.append(f"Legal Setting: {req}")
-        elif req.lower() == 'legal notice' and 'legal notice' not in generated_titles:
-            missing.append(f"Legal Setting: {req}")
-        elif req.lower() == 'terms of sale' and 'terms of service' not in generated_titles:
+        if req.lower() not in generated_settings:
             missing.append(f"Legal Setting: {req}")
             
     if missing:
