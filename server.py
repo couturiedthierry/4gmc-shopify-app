@@ -3694,38 +3694,22 @@ def build_store_design_spec(store, collections: list) -> dict:
 
     sections = []
     
-    if variant == 0:
-        sections.append({'type': 'hero', 'title': f'Welcome to {name}', 'cta': 'Shop Products'})
-        if c1:
-            sections.append({'type': 'featured_collection', 'title': 'Featured Products', 'collection_handle': c1['handle'], 'grid': 4})
-        sections.append({'type': 'service_callouts', 'title': 'Why Shop With Us'})
-        sections.append({'type': 'image_with_text', 'title': 'Lifestyle', 'image': 'placeholder'})
-        if c2:
-            sections.append({'type': 'featured_collection', 'title': 'New Arrivals', 'collection_handle': c2['handle'], 'grid': 4})
-        sections.append({'type': 'rich_text', 'title': 'Our Brand Story'})
-        sections.append({'type': 'newsletter', 'title': 'Stay Updated'})
-    elif variant == 1:
-        sections.append({'type': 'hero', 'title': f'Discover {name}', 'cta': 'Explore'})
-        sections.append({'type': 'collection_list', 'title': 'Shop by Category'})
-        if c1:
-            sections.append({'type': 'featured_collection', 'title': 'Popular Products', 'collection_handle': c1['handle'], 'grid': 4})
-        sections.append({'type': 'rich_text', 'title': 'About Us'})
-        if c2:
-            sections.append({'type': 'featured_collection', 'title': 'Featured Collections', 'collection_handle': c2['handle'], 'grid': 4})
-        sections.append({'type': 'image_with_text', 'title': 'Editorial Content', 'image': 'placeholder'})
-        sections.append({'type': 'service_callouts', 'title': 'Benefits'})
-        sections.append({'type': 'newsletter', 'title': 'Join Our Newsletter'})
-    else:
-        sections.append({'type': 'hero', 'title': f'The Best of {name}', 'cta': 'Shop Now'})
-        sections.append({'type': 'rich_text', 'title': 'Brand Introduction'})
-        if c1:
-            sections.append({'type': 'featured_collection', 'title': 'New Products', 'collection_handle': c1['handle'], 'grid': 4})
-        sections.append({'type': 'collection_list', 'title': 'Categories'})
-        sections.append({'type': 'service_callouts', 'title': 'Benefits'})
-        if c2:
-            sections.append({'type': 'featured_collection', 'title': 'Featured Products', 'collection_handle': c2['handle'], 'grid': 4})
-        sections.append({'type': 'image_with_text', 'title': 'Lifestyle', 'image': 'placeholder'})
-        sections.append({'type': 'newsletter', 'title': 'Subscribe'})
+    sections = [
+        {'type': 'announcement_bar', 'title': 'ANNOUNCEMENT BAR'},
+        {'type': 'hero', 'title': f'Welcome to {name}', 'cta': 'Shop Products'},
+        {'type': 'collection_list', 'title': 'Categories'},
+        {'type': 'service_callouts', 'title': 'Why Choose Us'},
+    ]
+    if c1:
+        sections.append({'type': 'featured_collection', 'title': 'Featured Products', 'collection_handle': c1['handle'], 'grid': 4})
+    sections.append({'type': 'rich_text', 'title': 'Promotional Offer'})
+    if c2:
+        sections.append({'type': 'featured_collection', 'title': 'Best Seller', 'collection_handle': c2['handle'], 'grid': 4})
+    sections.extend([
+        {'type': 'image_with_text', 'title': 'Our Quality', 'image': 'placeholder'},
+        {'type': 'faq', 'title': 'Frequently Asked Questions'},
+        {'type': 'contact_form', 'title': 'Get In Touch'}
+    ])
 
     footer_columns = [
         {
@@ -3815,10 +3799,10 @@ async def run_store_design_job(job_id, store_id):
             update_site_kit_job(job_id, 'running', 'Building destination brand design spec & 4-column footer mapping...')
             design_spec = build_store_design_spec(store, collections)
             
-            update_site_kit_job(job_id, 'running', 'Staging unpublished draft Liquid theme and templates...')
+            update_site_kit_job(job_id, 'running', 'Configuring live published theme and templates...')
             await asyncio.sleep(0.2)
             
-            update_site_kit_job(job_id, 'running', 'Configuring draft header, mobile drawer, and 4-column footer menus...')
+            update_site_kit_job(job_id, 'running', 'Configuring live header, mobile drawer, and 4-column footer menus...')
             await asyncio.sleep(0.2)
             
             update_site_kit_job(job_id, 'running', 'Connecting dynamic carousels to live Shopify collections...')
@@ -3829,7 +3813,7 @@ async def run_store_design_job(job_id, store_id):
             
             update_site_kit_job(
                 job_id, 'completed',
-                'Store design generated and staged in draft theme. Ready for preview & publication.',
+                'Store design generated and applied to the live theme. Ready for preview.',
                 6, 6, design_spec,
             )
             with db() as c:
