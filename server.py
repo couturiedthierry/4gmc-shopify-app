@@ -3264,7 +3264,7 @@ def check_page_facts(page, store):
             guard = json.loads(page['brand_guard'])
         except (json.JSONDecodeError, TypeError):
             guard = {}
-        if guard.get('version') != 2:
+        if guard.get('version') != 3:
             fail('This page was prepared with the old copy workflow. Generate the brand pages again.')
         if guard.get('identity_hash') != business_identity_hash(business):
             fail('Business identity changed. Generate the brand pages again before publishing.')
