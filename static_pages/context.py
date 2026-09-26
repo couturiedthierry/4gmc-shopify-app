@@ -91,6 +91,18 @@ def build_store_context(business: dict, brand: dict, ai_context: dict) -> dict:
         faq = ai_context.get("faq", {})
         ctx["faq.product_support_intro"] = faq.get("product_support_intro", "")
         
+        # Format the AI-generated niche questions into HTML paragraphs
+        faq_questions_html = ""
+        questions = faq.get("product_questions", [])
+        if questions and isinstance(questions, list):
+            for q in questions:
+                question = q.get("question", "")
+                answer = q.get("answer", "")
+                if question and answer:
+                    faq_questions_html += f"<p><strong>{question}</strong><br>\\n{answer}</p>\\n\\n"
+        
+        ctx["faq.product_questions_html"] = faq_questions_html
+        
         warranty = ai_context.get("warranty", {})
         ctx["warranty.product_context"] = warranty.get("product_context", "")
         
