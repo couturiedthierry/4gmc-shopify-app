@@ -64,6 +64,30 @@ async function refresh(){
    showToast(error?.message||error, true);
   }
 }
+  let storeDesignJob = null;
+  let storeDesignPollTimer = null;
+  async function pollStoreDesignJob(){
+   if(!storeDesignJob?.id)return;
+   try{
+    const job=await api('/api/jobs/'+storeDesignJob.id);
+    storeDesignJob=job;
+    if(job.status==='completed'){
+        storeDesignJob=null;
+        await refresh();
+        showToast('Store design generated! You can now preview and publish it.');
+        return;
+    }
+    if(job.status==='failed'){
+        storeDesignJob=null;
+        showToast(job.error||'Store design generation failed.',true);
+        return;
+    }
+    storeDesignPollTimer=setTimeout(pollStoreDesignJob,1800);
+   }catch(e){
+    storeDesignPollTimer=setTimeout(pollStoreDesignJob,5000);
+   }
+  }
+
 const siteKitRunning = () => ['queued','running'].includes(siteKitJob?.status);
 function watchSiteKitJob(job){
  siteKitJob=job;siteKitLastRun=job.progress||'Generating destination-brand pages…';clearTimeout(siteKitPollTimer);
