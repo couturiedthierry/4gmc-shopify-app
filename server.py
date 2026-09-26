@@ -214,6 +214,10 @@ def init():
             c.execute("ALTER TABLE stores ADD COLUMN product_source_url TEXT NOT NULL DEFAULT ''")
         if 'storefront_snapshot' not in store_columns:
             c.execute("ALTER TABLE stores ADD COLUMN storefront_snapshot TEXT NOT NULL DEFAULT ''")
+        if 'content_context' not in store_columns:
+            c.execute("ALTER TABLE stores ADD COLUMN content_context TEXT NOT NULL DEFAULT '{}'")
+        if 'content_hash' not in store_columns:
+            c.execute("ALTER TABLE stores ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
         if 'shopify_scopes' not in store_columns:
             c.execute("ALTER TABLE stores ADD COLUMN shopify_scopes TEXT NOT NULL DEFAULT ''")
         if 'shopify_refresh_token' not in store_columns:
