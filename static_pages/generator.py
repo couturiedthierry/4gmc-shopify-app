@@ -7,7 +7,7 @@ TRACK_ORDER_TEMPLATE = """<h1>Track Your Order</h1>
 <h2>How to Track</h2>
 <p>Tracking information may take {{tracking_update_time}} to update after the carrier receives the shipment. Please enter your tracking number below to view the current status of your delivery.</p>
 
-<p><em>[Tracking Component Placeholder - Connect this page to your store's tracking app or Shopify's native order status page]</em></p>
+<p><em>[Tracking Component Integration - Connect this page to your store's tracking app or Shopify's native order status page]</em></p>
 
 <h2>Need Help?</h2>
 <p>If you cannot find your tracking number, or if there has been no update for several days, please contact our support team at <a href="mailto:{{contact_email}}">{{contact_email}}</a>. Make sure to include your order number so we can assist you quickly.</p>
