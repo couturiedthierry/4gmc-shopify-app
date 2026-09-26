@@ -525,7 +525,7 @@ document.body.addEventListener('submit',e=>{
    const inp=$('mcp-token-input');if(inp)inp.value='';
    return 'Legacy compatibility token saved securely (SHA-256 hashed).';
   });
-  if(form.id==='store-design-form')perform(async()=>{await api('/api/store-design/build','POST',{});return 'Started store design generation. Follow progress in Task center or preview below.';});
+  if(form.id==='store-design-form')perform(async()=>{const job = await api('/api/store-design/build','POST',{}); storeDesignJob=job; pollStoreDesignJob(); return 'Started store design generation. The preview will automatically appear when finished.';});
  if(form.id==='design-colors-form')perform(async()=>{await api('/api/store','PUT',{name:data.store.name,domain:data.store.domain,business:data.store.business,brand:{color:val('design-primary'),accent:val('design-accent')}});return 'Brand colors saved.';});
  if(form.id==='brand-assets-form')perform(async()=>{
   const logo=$('design-logo').files[0],logoDark=$('design-logo-dark').files[0],favicon=$('design-favicon').files[0];

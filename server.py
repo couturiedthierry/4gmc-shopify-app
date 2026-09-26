@@ -3859,6 +3859,15 @@ async def build_store_design(data: StoreDesignInput, request: Request):
     task.add_done_callback(BACKGROUND_TASKS.discard)
     return job
 
+async def shopify_rest(domain: str, token: str, method: str, path: str, json_data: dict = None):
+    url = f'https://{domain}/admin/api/2024-01/{path}'
+    headers = {'X-Shopify-Access-Token': token, 'Content-Type': 'application/json'}
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.request(method, url, headers=headers, json=json_data)
+        if response.status_code >= 400:
+            raise Exception(f"Shopify API Error {response.status_code}: {response.text}")
+        return response.json()
+
 @app.post('/api/store-design/publish')
 async def publish_store_design(data: StoreDesignPublishInput, request: Request):
     require(request)
