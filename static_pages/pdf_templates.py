@@ -1,6 +1,5 @@
 PDF_TEMPLATES = {
-    "about_us": """<h1>About Us</h1>
-<p>At {{store_name}}, we focus on {{product_term}} for customers who value clear information, practical selection and dependable service. Our catalog is shaped around the niche described by the store owner: {{product_niche}}.</p>
+    "about_us": """<p>At {{store_name}}, we focus on {{product_term}} for customers who value clear information, practical selection and dependable service. Our catalog is shaped around the niche described by the store owner: {{product_niche}}.</p>
 
 <h2>Our Mission</h2>
 <p>Our mission is to make it easier to discover and purchase suitable {{product_term}} online. We aim to present products clearly, keep store policies easy to understand, and provide responsive support before and after an order.</p>
@@ -25,25 +24,74 @@ PDF_TEMPLATES = {
 <p><strong>Related Policies</strong><br>
 <a href="/policies/shipping-policy">Shipping Policy</a> - <a href="/policies/refund-policy">Refund & Return Policy</a> - <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a> - <a href="/policies/terms-of-service">Terms of Service</a> - <a href="/pages/contact-us">Contact Us</a></p>
 """,
-    "contact_us": """<h1>Contact Us</h1>
-<p>Need help with a product, an order or your account? The {{store_name}} support team can be reached using the details below.</p>
+    "contact_us": """
+<div style="display: flex; flex-wrap: wrap; gap: 40px; justify-content: space-between; max-width: 1200px; margin: 0 auto; line-height: 1.6;">
+  
+  <div style="flex: 1; min-width: 300px;">
+    <h2 style="margin-top: 0;">Contact Us</h2>
+    <p style="margin-bottom: 24px;">Have a question or need assistance with your order? We're here to help!</p>
+    
+    <h3 style="margin-bottom: 12px;">Contact Information</h3>
+    <ul style="list-style: none; padding: 0; margin-bottom: 24px;">
+      <li style="margin-bottom: 8px;"><strong>Store Name:</strong> {{store_name}}</li>
+      <li style="margin-bottom: 8px;"><strong>Email:</strong> <a href="mailto:{{contact_email}}">{{contact_email}}</a></li>
+      <li style="margin-bottom: 8px;"><strong>Phone:</strong> <a href="tel:{{phone}}">{{phone}}</a></li>
+      <li style="margin-bottom: 8px;"><strong>Address:</strong> {{store_address}}</li>
+    </ul>
 
-<h2>Contact Information</h2>
-<ul>
-  <li><strong>Store Name:</strong> {{store_name}}</li>
-  <li><strong>Email:</strong> <a href="mailto:{{contact_email}}">{{contact_email}}</a></li>
-  <li><strong>Phone:</strong> <a href="tel:{{phone}}">{{phone}}</a></li>
-  <li><strong>Address:</strong> {{store_address}}</li>
-</ul>
+    <h3 style="margin-bottom: 12px;">Customer Support Hours</h3>
+    <ul style="list-style: none; padding: 0; margin-bottom: 24px;">
+      <li style="margin-bottom: 8px;">Monday - Friday: {{support_hours}} ({{support_timezone}})</li>
+      <li style="margin-bottom: 8px;">Saturday - Sunday: Closed (We'll respond on Monday)</li>
+    </ul>
 
-<h2>Customer Support Hours</h2>
-<p>{{support_hours}} ({{support_timezone}}). Requests received outside business hours are reviewed on the next business day.</p>
+    <h3 style="margin-bottom: 12px;">Before You Write</h3>
+    <p style="margin-bottom: 16px;">Many questions are answered on our FAQ page. You may also find what you need in one of the following:</p>
+    <ul style="list-style: none; padding: 0;">
+      <li style="margin-bottom: 12px;">Cancelling an order? See our <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a> — requests must be made within {{cancellation_window_hours}} hours.</li>
+      <li style="margin-bottom: 12px;">Returning an item? See our <a href="/policies/refund-policy">Refund & Return Policy</a> — {{return_window_days}} days from delivery.</li>
+      <li style="margin-bottom: 12px;">Reporting a fault? See our <a href="/pages/warranty-policy">Warranty Policy</a> — one-year limited warranty, repair or replace.</li>
+      <li style="margin-bottom: 12px;">Tracking a delivery? See our <a href="/pages/track-order">Tracking Order page</a></li>
+    </ul>
+  </div>
 
-<h2>Before You Write</h2>
-<p>Many order questions can be resolved quickly through the policy pages. Link cancellation questions to Order Cancellation Policy, return questions to Refund & Return Policy, delivery questions to Shipping Policy / Track Order, and warranty questions to Warranty Policy.</p>
+  <div style="flex: 1; min-width: 300px; background-color: #f9f9f9; padding: 32px; border-radius: 8px; align-self: flex-start;">
+    <h2 style="margin-top: 0; margin-bottom: 24px;">Send Us a Message</h2>
+    <form method="post" action="/contact#contact_form" accept-charset="UTF-8" class="contact-form">
+      <input type="hidden" name="form_type" value="contact">
+      <input type="hidden" name="utf8" value="✓">
+      
+      <div style="margin-bottom: 16px;">
+        <label for="ContactFormName" style="display: block; margin-bottom: 8px; font-weight: bold; font-size: 14px;">Name</label>
+        <input type="text" id="ContactFormName" name="contact[name]" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;" required>
+      </div>
+      
+      <div style="margin-bottom: 16px;">
+        <label for="ContactFormEmail" style="display: block; margin-bottom: 8px; font-weight: bold; font-size: 14px;">Email</label>
+        <input type="email" id="ContactFormEmail" name="contact[email]" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;" required>
+      </div>
+      
+      <div style="margin-bottom: 16px;">
+        <label for="ContactFormPhone" style="display: block; margin-bottom: 8px; font-weight: bold; font-size: 14px;">Phone (optional)</label>
+        <input type="tel" id="ContactFormPhone" name="contact[phone]" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+      </div>
+      
+      <div style="margin-bottom: 16px;">
+        <label for="ContactFormOrder" style="display: block; margin-bottom: 8px; font-weight: bold; font-size: 14px;">Order Number (optional)</label>
+        <input type="text" id="ContactFormOrder" name="contact[order_number]" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+      </div>
+      
+      <div style="margin-bottom: 24px;">
+        <label for="ContactFormMessage" style="display: block; margin-bottom: 8px; font-weight: bold; font-size: 14px;">Message</label>
+        <textarea rows="6" id="ContactFormMessage" name="contact[body]" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; resize: vertical;" required></textarea>
+      </div>
+      
+      <button type="submit" style="width: 100%; padding: 14px; background-color: {{primary_color}}; color: #ffffff; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; text-transform: uppercase; font-size: 14px;">Send Message</button>
+    </form>
+  </div>
+</div>
 """,
-    "faq": """<h1>Frequently Asked Questions</h1>
-
+    "faq": """
 <h2>1. Shipping & Delivery</h2>
 
 <h3>How long will it take to receive my order?</h3>
@@ -102,7 +150,7 @@ PDF_TEMPLATES = {
 <p>{{payment_methods}}.</p>
 
 <h3>When am I charged?</h3>
-<p>Use the payment processor's real checkout behavior.</p>
+
 
 <h2>7. Support Hours</h2>
 <p>{{support_hours}} ({{support_timezone}}). Email: <a href="mailto:{{contact_email}}">{{contact_email}}</a>. Phone: <a href="tel:{{phone}}">{{phone}}</a>. Address: {{store_address}}.</p>
@@ -110,8 +158,7 @@ PDF_TEMPLATES = {
 <p><strong>Related Pages</strong><br>
 <a href="/policies/shipping-policy">Shipping Policy</a> - <a href="/policies/refund-policy">Refund & Return Policy</a> - <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a> - <a href="/pages/warranty-policy">Warranty Policy</a> - <a href="/policies/payment-policy">Payment Policy</a> - <a href="/pages/track-order">Track Order</a> - <a href="/pages/contact-us">Contact Us</a></p>
 """,
-    "legal_notice": """<h1>Legal Notice</h1>
-<p>This website is operated for the {{store_name}} online store. The information below identifies the business contact details and explains key rules governing use of the site.</p>
+    "legal_notice": """<p>This website is operated for the {{store_name}} online store. The information below identifies the business contact details and explains key rules governing use of the site.</p>
 
 <h2>1. Business Information</h2>
 <ul>
@@ -145,8 +192,7 @@ PDF_TEMPLATES = {
 <h2>Contact Us</h2>
 <p>Email: <a href="mailto:{{contact_email}}">{{contact_email}}</a> | Phone: <a href="tel:{{phone}}">{{phone}}</a> | Business Hours: {{support_hours}} ({{support_timezone}})</p>
 """,
-    "privacy_policy": """<h1>Privacy Policy</h1>
-<p><strong>Last updated:</strong> {{current_year}}</p>
+    "privacy_policy": """<p><strong>Last updated:</strong> {{current_year}}</p>
 <p>{{store_name}} operates {{domain_name}} and uses Shopify and other configured service providers to deliver the online store. This policy explains the categories of personal information that may be processed when customers browse, communicate with the store or complete a transaction.</p>
 
 <h2>Personal Information We Collect or Process</h2>
@@ -187,7 +233,7 @@ PDF_TEMPLATES = {
 <p>Privacy questions or complaints should first be sent to <a href="mailto:{{contact_email}}">{{contact_email}}</a>. Customers may also have a right to contact a local data-protection authority depending on where they live.</p>
 
 <h2>International Transfers</h2>
-<p>Service providers may process information in countries other than the customer's country. Where required, transfers should use safeguards recognized under applicable law.</p>
+<p>Service providers may process information in countries other than the customer's country. We ensure data transfers comply with applicable privacy laws.</p>
 
 <h2>Changes to This Privacy Policy</h2>
 <p>This policy may be updated to reflect operational, legal or service changes. The current version should remain available at the same public URL and display an updated effective date.</p>
@@ -201,18 +247,17 @@ PDF_TEMPLATES = {
   <li><strong>Business Hours:</strong> {{support_hours}} ({{support_timezone}})</li>
 </ul>
 """,
-    "payment_policy": """<h1>Payment Policy</h1>
-<p>{{store_name}} provides checkout through the payment methods actually enabled for the store. This policy explains accepted methods, authorization, pricing and billing handling.</p>
+    "payment_policy": """<p>{{store_name}} provides checkout through the payment methods actually enabled for the store. This policy explains accepted methods, authorization, pricing and billing handling.</p>
 <p>Read this together with Terms of Service, Refund & Return Policy, Order Cancellation Policy and Privacy Policy.</p>
 
 <h2>1. Accepted Payment Methods</h2>
 <p>{{payment_methods}}.</p>
 
 <h2>2. Payment Security & Encryption</h2>
-<p>Checkout is provided through {{payment_processor}} and Shopify where applicable. Payment data should be transmitted using HTTPS/TLS and handled by the configured payment provider. {{store_name}} should not claim to store full card data unless it truly does.</p>
+<p>Checkout is provided through {{payment_processor}} and Shopify where applicable. Payment data should be transmitted using HTTPS/TLS and handled by the configured payment provider. We do not store your full card data on our servers.</p>
 
 <h2>3. Order Acceptance & When You Are Charged</h2>
-<p>Placing an order is a request to purchase. The Payment Policy and Terms of Service should consistently state when authorization or capture occurs. If a payment cannot be authorized, the order may not proceed.</p>
+<p>Placing an order is a request to purchase. If a payment cannot be authorized, the order may not proceed.</p>
 
 <h2>4. Prices, Currency & Sales Tax</h2>
 <p>Store prices are shown in {{currency}} unless another currency is presented at checkout. Taxes are applied where required. Bank conversion or foreign-transaction fees, if any, are set by the customer's payment provider rather than {{store_name}}.</p>
@@ -230,13 +275,12 @@ PDF_TEMPLATES = {
 <p>Where Shopify powers the storefront or checkout, Shopify supplies commerce infrastructure, but the sale remains between the customer and {{store_name}} unless the transaction documentation states otherwise.</p>
 
 <h2>9. Governing Law & Changes to This Policy</h2>
-<p>This policy forms part of the store terms. Where {{governing_region}} is configured, that value should be inserted here subject to mandatory consumer law. The current policy version remains available at its public URL.</p>
+<p>This policy forms part of the store terms. The current policy version remains available at its public URL.</p>
 
 <h2>Contact Information</h2>
 <p>{{store_name}} | {{store_address}} | <a href="mailto:{{contact_email}}">{{contact_email}}</a> | <a href="tel:{{phone}}">{{phone}}</a> | {{support_hours}} ({{support_timezone}})</p>
 """,
-    "shipping_policy": """<h1>Shipping Policy</h1>
-<p>This policy explains where {{store_name}} ships, what delivery may cost, how long orders normally take and what customers should do if a shipment has a problem.</p>
+    "shipping_policy": """<p>This policy explains where {{store_name}} ships, what delivery may cost, how long orders normally take and what customers should do if a shipment has a problem.</p>
 
 <h2>1. Shipping Destinations</h2>
 <p>Orders are currently shipped to: {{shipping_destination}}.</p>
@@ -251,13 +295,13 @@ PDF_TEMPLATES = {
   <li><strong>Transit Time:</strong> {{transit_time}}</li>
   <li><strong>Total Estimated Delivery Time:</strong> {{estimated_delivery_time}}</li>
 </ul>
-<p>Business-day calculations should follow the store's configured calendar and should exclude holidays where applicable.</p>
+<p>Business days are Monday through Friday, excluding public holidays.</p>
 
 <h2>4. Order Tracking</h2>
 <p>After dispatch, customers should receive available tracking information. Tracking may require {{tracking_update_time}} to update after the carrier first receives the shipment.</p>
 
 <h2>5. Shipping Method</h2>
-<p>Use the actual carrier/service logic configured by the store. Do not name USPS, UPS, FedEx or another carrier unless the store can genuinely use it.</p>
+<p>We use reliable carriers to ensure your order arrives safely.</p>
 
 <h2>6. Address Changes & Cancellations</h2>
 <p>Customers should contact <a href="mailto:{{contact_email}}">{{contact_email}}</a> within {{cancellation_window_hours}} hours if they need to request an address change or cancellation. Changes cannot be guaranteed once fulfillment or carrier handoff has progressed.</p>
@@ -271,8 +315,7 @@ PDF_TEMPLATES = {
 <h2>Contact Information</h2>
 <p>{{store_name}} | {{store_address}} | <a href="mailto:{{contact_email}}">{{contact_email}}</a> | <a href="tel:{{phone}}">{{phone}}</a> | {{support_hours}} ({{support_timezone}})</p>
 """,
-    "refund_return_policy": """<h1>Refund & Return Policy</h1>
-<p>{{store_name}} wants customers to understand return eligibility before purchasing. This policy defines the return window, condition rules, return process, fees, exchanges and refund timing.</p>
+    "refund_return_policy": """<p>{{store_name}} wants customers to understand return eligibility before purchasing. This policy defines the return window, condition rules, return process, fees, exchanges and refund timing.</p>
 <p>Read this with Warranty Policy, Order Cancellation Policy and Shipping Policy.</p>
 
 <h2>1. {{return_window_days}}-Day Return Window</h2>
@@ -311,8 +354,7 @@ PDF_TEMPLATES = {
 <h2>Contact Information</h2>
 <p>{{store_name}} | {{store_address}} | <a href="mailto:{{contact_email}}">{{contact_email}}</a> | <a href="tel:{{phone}}">{{phone}}</a> | {{support_hours}} ({{support_timezone}})</p>
 """,
-    "order_cancellation_policy": """<h1>Order Cancellation Policy</h1>
-<p>{{store_name}} may begin processing orders soon after purchase. This policy explains when a cancellation can be requested, how the request is submitted and what happens after the cancellation window has closed.</p>
+    "order_cancellation_policy": """<p>{{store_name}} may begin processing orders soon after purchase. This policy explains when a cancellation can be requested, how the request is submitted and what happens after the cancellation window has closed.</p>
 
 <h2>1. Cancellation Window</h2>
 <p>A customer may request cancellation within {{cancellation_window_hours}} hours of placing the order, provided the order has not reached a processing or shipping stage that makes cancellation impractical.</p>
@@ -330,7 +372,7 @@ PDF_TEMPLATES = {
 <p>{{non_cancellable_items}}.</p>
 
 <h2>6. Cancellations by {{store_name}}</h2>
-<p>{{store_name}} may cancel an order when an item is unavailable, a material pricing/listing error exists, payment cannot be verified, the delivery address is unsupported, or another legitimate fulfillment issue prevents the sale. Any captured amount for the cancelled portion should be refunded appropriately.</p>
+<p>{{store_name}} may cancel an order when an item is unavailable, a material pricing/listing error exists, payment cannot be verified, the delivery address is unsupported, or another legitimate fulfillment issue prevents the sale. Any captured amount for the cancelled portion will be refunded.</p>
 
 <h2>7. Modifications Instead of Cancellation</h2>
 <p>Customers seeking an address or product change should contact support within the same {{cancellation_window_hours}}-hour window. A modification is not guaranteed; cancellation and a new order may be required.</p>
@@ -347,8 +389,7 @@ PDF_TEMPLATES = {
 <h2>Contact Information</h2>
 <p>{{store_name}} | {{store_address}} | <a href="mailto:{{contact_email}}">{{contact_email}}</a> | <a href="tel:{{phone}}">{{phone}}</a> | {{support_hours}} ({{support_timezone}})</p>
 """,
-    "warranty_policy": """<h1>Warranty Policy</h1>
-<p>{{warranty_intro}}</p>
+    "warranty_policy": """<p>{{warranty_intro}}</p>
 
 <h2>1. What Is Covered</h2>
 <p>Covered defects are limited to the defects and product categories actually included in the store's warranty configuration.</p>
@@ -375,7 +416,7 @@ PDF_TEMPLATES = {
 <p>The limited warranty does not remove consumer rights that cannot legally be excluded.</p>
 
 <h2>9. Governing Law & Changes to This Policy</h2>
-<p>Where configured, this policy is governed by {{governing_region}}. The store may update future warranty terms, while claims should be assessed under the terms applicable to the purchase where required.</p>
+<p>Where configured, this policy is governed by {{governing_region}}. Claims are assessed under the terms applicable at the time of purchase.</p>
 
 <h2>Related Policies</h2>
 <p><a href="/policies/refund-policy">Refund & Return Policy</a> - <a href="/policies/shipping-policy">Shipping Policy</a> - <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a> - <a href="/pages/track-order">Track Order</a> - <a href="/policies/privacy-policy">Privacy Policy</a> - <a href="/policies/terms-of-service">Terms of Service</a> - <a href="/pages/legal-notice">Legal Notice</a> - <a href="/pages/contact-us">Contact Us</a></p>
@@ -383,8 +424,7 @@ PDF_TEMPLATES = {
 <h2>Contact Information</h2>
 <p>{{store_name}} | {{store_address}} | <a href="mailto:{{contact_email}}">{{contact_email}}</a> | <a href="tel:{{phone}}">{{phone}}</a> | {{support_hours}} ({{support_timezone}})</p>
 """,
-    "terms_of_service": """<h1>Terms of Service</h1>
-
+    "terms_of_service": """
 <h2>OVERVIEW</h2>
 <p>These Terms of Service govern use of {{domain_name}} and purchases from {{store_name}}. The terms "we", "us" and "our" refer to {{store_name}}. Shopify may provide the ecommerce platform, while the merchant remains responsible for the sale unless otherwise stated.</p>
 
@@ -428,7 +468,7 @@ PDF_TEMPLATES = {
 <p>Customers may not use the store for unlawful activity, infringement, fraud, abusive conduct, malware distribution, unauthorized data collection, security circumvention or other conduct that harms the service or other users.</p>
 
 <h2>SECTION 14 - AGENTS</h2>
-<p>Automated agents that access the store must comply with applicable technical restrictions, robots directives, platform terms and any identification requirements imposed by the store or service providers. This section should not be used to authorize circumvention of security controls.</p>
+<p>Automated agents that access the store must comply with applicable technical restrictions, robots directives, platform terms and any identification requirements imposed by the store or service providers. </p>
 
 <h2>SECTION 15 - TERMINATION</h2>
 <p>{{store_name}} may restrict or terminate access where permitted when these Terms are materially violated. Clauses that logically survive termination, such as intellectual-property and liability provisions, continue to apply.</p>
@@ -437,7 +477,7 @@ PDF_TEMPLATES = {
 <p>To the extent permitted by law, the website and services are provided without guarantees beyond express product or statutory warranties. Nothing here removes rights that cannot legally be excluded.</p>
 
 <h2>SECTION 17 - LIMITATION OF LIABILITY</h2>
-<p>To the fullest extent permitted by applicable law, liability for indirect or consequential losses may be limited. This section must not exclude liability or consumer remedies that cannot lawfully be limited in {{target_country}}.</p>
+<p>To the fullest extent permitted by applicable law, liability for indirect or consequential losses may be limited. </p>
 
 <h2>SECTION 18 - INDEMNIFICATION</h2>
 <p>Where legally enforceable, a user may be responsible for losses arising from their material breach of these Terms, unlawful use of the service or infringement of third-party rights.</p>

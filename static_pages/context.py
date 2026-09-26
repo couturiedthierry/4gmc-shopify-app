@@ -8,6 +8,7 @@ def build_store_context(business: dict, brand: dict, ai_context: dict) -> dict:
         "store_name": business.get("business_name", "Our Store"),
         "domain_name": business.get("domain_name", "example.com"),
         "contact_email": business.get("email", "support@example.com"),
+        "primary_color": brand.get("color", "#2251dc"),
         "store_address": business.get("address", ""),
         "target_country": business.get("country", "United States"),
         "currency": business.get("currency", "USD"),
