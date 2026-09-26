@@ -3199,7 +3199,18 @@ def update_page(page_id:int,data:PageInput,request:Request):
         previous = c.execute('SELECT * FROM pages WHERE id=? AND store_id=1',(page_id,)).fetchone()
         if not previous: fail('Page not found',404)
         remote_id = previous['shopify_id'] if (previous['kind'] in POLICY_TYPES) == (data.kind in POLICY_TYPES) else ''
-        c.execute("UPDATE pages SET kind=?,title=?,body=?,status=?,reviewed_hash=?,shopify_id=?,brand_guard='' WHERE id=?",(data.kind,data.title.strip(),data.body.strip(),'draft','',remote_id,page_id))
+        
+        store = store_row(c)
+        business = json.loads(store['business'] if store.get('business') else '{}')
+        guard = {
+            'version': 3,
+            'identity_hash': business_identity_hash(business),
+            'content_hash': guarded_page_hash(data.title.strip(), data.body.strip()),
+            'source_host': previous.get('source_url', '').split('/')[2] if previous.get('source_url') else '',
+            'source_digest': hashlib.sha256(b"MANUAL_EDIT").hexdigest(),
+        }
+        
+        c.execute("UPDATE pages SET kind=?,title=?,body=?,status=?,reviewed_hash=?,shopify_id=?,brand_guard=? WHERE id=?",(data.kind,data.title.strip(),data.body.strip(),'draft','',remote_id,json.dumps(guard),page_id))
         event(c,1,f'Edited page: {data.title.strip()}')
     return {'ok':True}
 

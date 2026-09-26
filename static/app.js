@@ -205,7 +205,7 @@ function products(){
 }
  function pages(){
  const managed=siteKitPlan?.pages||[];
- const list=managed.length?managed.map(page=>`<details class="site-kit-document"><summary><strong>${esc(page.title)}</strong><span class="tag ${page.status==='published'?'good':''}">${esc(page.status)}</span></summary><div class="site-kit-copy">${page.body}</div></details>`).join(''):
+ const list=managed.length?managed.map(page=>`<details class="site-kit-document"><summary><strong>${esc(page.title)}</strong><span class="tag ${page.status==='published'?'good':''}">${esc(page.status)}</span></summary><div class="site-kit-copy">${page.body}<div class="actions" style="margin-top:16px"><button class="secondary" data-action="edit-page" data-id="${page.id}">Edit document</button></div></div></details>`).join(''):
   '<div class="empty">Click "Generate Pages & Policies" to create your brand pages.</div>';
  const result=siteKitLastRun?`<div class="note">${esc(siteKitLastRun)}${siteKitRunning()&&siteKitJob.total?` (${siteKitJob.completed}/${siteKitJob.total})`:''}</div>`:'';
  const generating=siteKitRunning();
@@ -367,6 +367,15 @@ function render(){
  $('store-domain').textContent=data.store.domain||'No store connected';$('crumb').textContent=names[view];
  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
  $('main').innerHTML=({overview,products,pages,design,business,connections,tasks,activity}[view])();
+ if(editPage){
+  const page=siteKitPlan?.pages?.find(p=>p.id===editPage);
+  if(page){
+   const m=document.createElement('div');
+   m.className='modal-overlay';
+   m.innerHTML=`<div class="modal"><div class="modal-head"><h2>Edit ${esc(page.title)}</h2><button type="button" class="close" data-action="close-page"></button></div><form id="page-form" class="form-grid" data-id="${page.id}"><input id="page-kind" type="hidden" value="${esc(page.kind)}"><label class="full">Title<input id="page-title" value="${esc(page.title)}" required></label><label class="full">Body text (HTML)<textarea id="page-body" rows="18" required>${esc(page.body)}</textarea></label><div class="full actions"><button class="primary">Save page</button></div></form></div>`;
+   $('main').appendChild(m);
+  }
+ }
 }
 async function perform(fn){if(busy)return;busy=true;try{const message=await fn();await refresh();showToast(typeof message==='string'?message:'Saved successfully');}catch(error){showToast(error?.message||error,true);}finally{busy=false;}}
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/login','POST',{password:val('password')});$('password').value='';$('login-error').textContent='';await refresh();}catch(error){$('login-error').textContent=error.message;}});
