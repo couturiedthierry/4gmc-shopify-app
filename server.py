@@ -3865,5 +3865,64 @@ async def publish_store_design(data: StoreDesignPublishInput, request: Request):
     require(request)
     with db() as c:
         store = store_row(c)
-        event(c, 1, 'Published verified store design theme, navigation menus, checkout branding, and Track123 setup to Shopify')
-    return {'ok': True, 'published_theme': data.draft_theme_id or 'gid://shopify/Theme/draft-4gmc-101', 'status': 'published'}
+        domain = store['domain']
+        token = FERNET.decrypt(store['shopify_token'].encode()).decode() if store['shopify_token'] else ''
+        if not store['storefront_snapshot']:
+            fail('No store design spec found. Please Generate & Build Store Design first.', 400)
+        snapshot = json.loads(store['storefront_snapshot'])
+        if snapshot.get('version') != 2:
+            fail('Invalid design spec version.', 400)
+        
+    if not token:
+        fail('Shopify not connected', 400)
+        
+    # Get main theme
+    try:
+        themes_res = await shopify_rest(domain, token, 'GET', 'themes.json')
+        main_theme = next((t for t in themes_res.get('themes', []) if t.get('role') == 'main'), None)
+        if not main_theme:
+            fail('Could not find main Shopify theme.', 500)
+            
+        theme_id = main_theme['id']
+        
+        # Build index.json payload
+        sections_spec = snapshot.get('sections', [])
+        blocks = {}
+        order = []
+        for i, sec in enumerate(sections_spec):
+            sec_id = f"{sec['type']}_{i}"
+            order.append(sec_id)
+            if sec['type'] == 'announcement_bar':
+                blocks[sec_id] = {"type": "announcement-bar", "blocks": {"announcement": {"type": "announcement", "settings": {"text": sec.get('title', 'ANNOUNCEMENT BAR')}}}, "block_order": ["announcement"], "settings": {}}
+            elif sec['type'] == 'hero':
+                blocks[sec_id] = {"type": "image-banner", "blocks": {"heading": {"type": "heading", "settings": {"heading": sec.get('title', 'Welcome')}}, "buttons": {"type": "buttons", "settings": {"button_label_1": sec.get('cta', 'Shop')}}}, "block_order": ["heading", "buttons"], "settings": {}}
+            elif sec['type'] == 'collection_list':
+                blocks[sec_id] = {"type": "collection-list", "settings": {"title": sec.get('title', 'Categories')}}
+            elif sec['type'] == 'service_callouts':
+                blocks[sec_id] = {"type": "multicolumn", "blocks": {"col1": {"type": "column", "settings": {"title": "Quality Products"}}, "col2": {"type": "column", "settings": {"title": "Fast Shipping"}}, "col3": {"type": "column", "settings": {"title": "24/7 Support"}}}, "block_order": ["col1", "col2", "col3"], "settings": {"title": sec.get('title', 'Why Choose Us')}}
+            elif sec['type'] == 'featured_collection':
+                blocks[sec_id] = {"type": "featured-collection", "settings": {"title": sec.get('title', 'Featured Products'), "collection": sec.get('collection_handle', '')}}
+            elif sec['type'] == 'rich_text':
+                blocks[sec_id] = {"type": "rich-text", "blocks": {"heading": {"type": "heading", "settings": {"heading": sec.get('title', 'Promotional Offer')}}, "text": {"type": "text", "settings": {"text": "<p>Enjoy high quality products at great prices.</p>"}}}, "block_order": ["heading", "text"], "settings": {}}
+            elif sec['type'] == 'image_with_text':
+                blocks[sec_id] = {"type": "image-with-text", "blocks": {"heading": {"type": "heading", "settings": {"heading": sec.get('title', 'Our Quality')}}}, "block_order": ["heading"], "settings": {}}
+            elif sec['type'] == 'faq':
+                blocks[sec_id] = {"type": "collapsible_content", "blocks": {"q1": {"type": "collapsible_row", "settings": {"heading": "What is your shipping policy?", "row_content": "<p>We offer standard shipping across the US.</p>"}}, "q2": {"type": "collapsible_row", "settings": {"heading": "How do I track my order?", "row_content": "<p>You can track your order in the Track Order page.</p>"}}}, "block_order": ["q1", "q2"], "settings": {"heading": sec.get('title', 'Frequently Asked Questions')}}
+            elif sec['type'] == 'contact_form':
+                blocks[sec_id] = {"type": "contact-form", "settings": {"heading": sec.get('title', 'Get In Touch')}}
+            else:
+                blocks[sec_id] = {"type": "rich-text", "settings": {}}
+                
+        index_json = json.dumps({"sections": blocks, "order": order})
+        
+        # Upload to Shopify
+        await shopify_rest(domain, token, 'PUT', f'themes/{theme_id}/assets.json', {'asset': {'key': 'templates/index.json', 'value': index_json}})
+        
+        with db() as c:
+            event(c, 1, 'Published verified store design layout (index.json) to active Shopify theme')
+            
+        return {'ok': True, 'published_theme': str(theme_id), 'status': 'published'}
+    except Exception as e:
+        print(f"Publishing failed: {e}", flush=True)
+        fail(f"Failed to publish theme layout. Ensure app has write_themes scope and store is using a standard 2.0 theme. Error: {str(e)}", 500)
+
