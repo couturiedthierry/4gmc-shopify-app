@@ -962,8 +962,7 @@ async def update_store(data: StoreUpdate, request: Request):
             c.execute("UPDATE products SET reviewed_hash='',status='draft' WHERE store_id=1")
             event(c,1,'Business details changed; regenerate store content')
         elif brand_changed:
-            c.execute("UPDATE stores SET storefront_snapshot='' WHERE id=1")
-            event(c,1,'Brand colors changed; regenerate product images and storefront preview')
+            event(c,1,'Brand colors changed; regenerate product images')
         c.execute('UPDATE stores SET name=?,domain=?,business=?,brand=? WHERE id=1', (name,domain,json.dumps(normalized_business),json.dumps(brand)))
         event(c,1,'Store details updated')
         is_connected = store_connected(previous)
@@ -1040,7 +1039,7 @@ def upload_brand_asset(data: BrandAssetInput, request: Request):
         store = store_row(c)
         brand = json.loads(store['brand'])
         brand[data.kind] = metadata
-        c.execute("UPDATE stores SET brand=?,storefront_snapshot='' WHERE id=1",
+        c.execute("UPDATE stores SET brand=? WHERE id=1",
                   (json.dumps(brand),))
         event(c, 1, f'Updated store {data.kind}')
     return {'ok': True, 'asset': metadata}
