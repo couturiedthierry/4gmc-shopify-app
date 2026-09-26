@@ -98,6 +98,7 @@ async def prevent_stale_dashboard_assets(request: Request, call_next):
 
 ACTIVE_STORE_ID = ContextVar('gmc_active_store_id', default=1)
 BACKGROUND_JOB = ContextVar('gmc_background_job', default=False)
+BACKGROUND_TASKS = set()
 
 
 @contextmanager
