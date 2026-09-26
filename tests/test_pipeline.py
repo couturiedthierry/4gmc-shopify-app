@@ -13,6 +13,8 @@ client = TestClient(app)
 
 from PIL import Image
 import io
+import tempfile
+
 def create_mock_image(format='JPEG', size=(100, 100)):
     img = Image.new('RGB', size, color='red')
     b = io.BytesIO()
@@ -31,10 +33,7 @@ class TestIntegration(unittest.TestCase):
     @patch('server.shopify_graphql')
     @patch('server.shopify_rest')
     @patch('httpx.AsyncClient.post')
-    @patch('builtins.open', new_callable=MagicMock)
-    @patch('os.path.exists')
-    def test_publish_live_mocked(self, mock_exists, mock_open, mock_httpx_post, mock_rest, mock_gql, mock_db):
-        mock_exists.return_value = True # Make os.path.exists return True so it finds our mocked logo file
+    def test_publish_live_mocked(self, mock_httpx_post, mock_rest, mock_gql, mock_db):
         cookies = get_auth_cookies(1)
         mock_c = MagicMock()
         
@@ -54,7 +53,7 @@ class TestIntegration(unittest.TestCase):
                 ]
             elif 'products' in args[0]:
                 mock_cursor.__iter__.return_value = [
-                    {'id': 1, 'images': '[]', 'shopify_id': 'gid://shopify/Product/123'} # NO IMAGES
+                    {'id': 1, 'images': '[]', 'shopify_id': 'gid://shopify/Product/123'}
                 ]
             return mock_cursor
             
@@ -67,7 +66,7 @@ class TestIntegration(unittest.TestCase):
         async def mock_gql_side_effect(domain, token, query, variables=None):
             self.gql_calls.append((query, variables))
             if 'stagedUploadsCreate' in query: return {'stagedUploadsCreate': {'stagedTargets': [{'url': 'http://up', 'resourceUrl': 'http://res', 'parameters': []}], 'userErrors': []}}
-            if 'themes' in query: return {'themes': {'edges': [{'node': {'id': 'gid://1', 'name': 'Dawn', 'role': 'MAIN'}}]}}
+            if 'themes' in query: return {'themes': {'edges': [{'node': {'id': 'gid://shopify/Theme/999', 'name': 'Target', 'role': 'UNPUBLISHED'}}]}}
             if 'shop' in query: return {'shop': {'plan': {'displayName': 'Shopify Plus', 'partnerDevelopment': False}}}
             if 'fileCreate' in query: return {'fileCreate': {'files': [{'id': 'gid://shopify/MediaImage/999'}], 'userErrors': []}}
             if 'checkoutBrandingUpsert' in query: return {'checkoutBrandingUpsert': {'checkoutBranding': {}, 'userErrors': []}}
@@ -76,10 +75,34 @@ class TestIntegration(unittest.TestCase):
         
         async def mock_rest_side_effect(domain, token, method, path, data=None):
             self.rest_calls.append((method, path, data))
+            if 'GET' == method and 'assets.json' in path and 'asset[key]' not in path:
+                return {'assets': [
+                    {'key': 'sections/announcement-bar.liquid'},
+                    {'key': 'sections/image-banner.liquid'},
+                    {'key': 'sections/collection-list.liquid'},
+                    {'key': 'sections/rich-text.liquid'},
+                    {'key': 'sections/featured-collection.liquid'},
+                    {'key': 'sections/image-with-text.liquid'},
+                    {'key': 'sections/collapsible_content.liquid'},
+                    {'key': 'sections/contact-form.liquid'}
+                ]}
             if 'GET' == method and 'assets.json' in path and 'index.json' in path:
                 return {'asset': {'value': json.dumps({"sections": {"original": {}}, "order": ["original"]})}}
             if 'GET' == method and 'assets.json' in path and 'product.json' in path:
-                return {'asset': {'value': json.dumps({"sections": {"main": {}}, "order": ["main"]})}}
+                return {'asset': {'value': json.dumps({
+                    "sections": {
+                        "main": {
+                            "type": "main-product", 
+                            "blocks": {
+                                "title_block": {"type": "title"},
+                                "share_block": {"type": "share"},
+                                "related": {"type": "related-products"}
+                            },
+                            "block_order": ["title_block", "share_block", "related"]
+                        }
+                    }, 
+                    "order": ["main"]
+                })}}
             return {}
         mock_rest.side_effect = mock_rest_side_effect
         
@@ -89,36 +112,74 @@ class TestIntegration(unittest.TestCase):
             return mock_resp
         mock_httpx_post.side_effect = async_mock_post
         
-        with patch('server.FERNET') as mock_fernet:
-            mock_fernet.decrypt.return_value = b'decrypted'
-            res = client.post('/api/store/publish', cookies=cookies)
+        real_join = os.path.join
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp.write(b"fake_image_bytes")
+            tmp_path = tmp.name
             
+        with patch('server.brand_asset_directory', return_value=os.path.dirname(tmp_path)):
+            with patch('os.path.join', side_effect=lambda *args: tmp_path if 'logo' in args[-1] else real_join(*args)):
+                with patch('builtins.open', unittest.mock.mock_open(read_data=b"fake_image_bytes")):
+                    with patch('server.FERNET') as mock_fernet:
+                        mock_fernet.decrypt.return_value = b'decrypted'
+                        res = client.post('/api/store/publish', json={'target_theme_id': 'gid://shopify/Theme/999'}, cookies=cookies)
+                    
+        os.remove(tmp_path)
+        
         self.assertEqual(res.status_code, 200, res.text)
         self.assertTrue(res.json()['ok'])
         
+        # Checkout Bytes Assertions
         mock_httpx_post.assert_called_once()
-        
         checkout_vars = next((v for q, v in self.gql_calls if 'checkoutBrandingUpsert' in q), None)
-        self.assertIsNotNone(checkout_vars)
         self.assertEqual(checkout_vars['checkoutBrandingInput']['designSystem']['logo']['imageId'], 'gid://shopify/MediaImage/999')
         
-        # Test index.json injection
+        # Product cleanup assertion
+        product_put = next((data for m, p, data in self.rest_calls if m == 'PUT' and data['asset']['key'] == 'templates/product.json'), None)
+        self.assertIsNotNone(product_put)
+        updated_prod = json.loads(product_put['asset']['value'])
+        blocks = updated_prod['sections']['main']['blocks']
+        self.assertIn('title_block', blocks) # Kept
+        self.assertNotIn('share_block', blocks) # Removed
+        self.assertNotIn('related', blocks) # Removed
+        
+        # Homepage complete layout assertion
         index_put = next((data for m, p, data in self.rest_calls if m == 'PUT' and data['asset']['key'] == 'templates/index.json'), None)
         self.assertIsNotNone(index_put)
         updated_index = json.loads(index_put['asset']['value'])
-        self.assertIn('gmc_hero', updated_index['sections'])
-        self.assertIn('gmc_featured_collection', updated_index['sections'])
-        self.assertIn('original', updated_index['sections'])
+        self.assertEqual(updated_index['order'][0], 'gmc_announcement')
+        self.assertEqual(updated_index['order'][-1], 'original')
+        self.assertEqual(len(updated_index['order']), 11) # 10 new + 1 original
         
-        # Test product.json clean template
-        product_put = next((data for m, p, data in self.rest_calls if m == 'PUT' and data['asset']['key'] == 'templates/product.json'), None)
-        self.assertIsNotNone(product_put)
+    @patch('server.db')
+    @patch('server.DRY_RUN', False)
+    @patch('server.shopify_graphql')
+    def test_publish_main_theme_rejected(self, mock_gql, mock_db):
+        cookies = get_auth_cookies(1)
+        mock_c = MagicMock()
         
-        # Test static header/footer
-        header_put = next((data for m, p, data in self.rest_calls if m == 'PUT' and data['asset']['key'] == 'sections/header.json'), None)
-        self.assertIsNotNone(header_put)
-        footer_put = next((data for m, p, data in self.rest_calls if m == 'PUT' and data['asset']['key'] == 'sections/footer.json'), None)
-        self.assertIsNotNone(footer_put)
+        def mock_execute(*args):
+            mock_cursor = MagicMock()
+            if 'stores' in args[0]: mock_cursor.fetchone.return_value = {'shopify_token': 'token', 'domain': 'test.com'}
+            elif 'pages' in args[0]: mock_cursor.__iter__.return_value = [{'title': 'Legal Notice', 'kind': 'page'}, {'title': 'Privacy Policy', 'kind': 'page'}, {'title': 'Payment Policy', 'kind': 'page'}, {'title': 'Shipping Policy', 'kind': 'page'}, {'title': 'Terms of Service', 'kind': 'page'}, {'title': 'Refund and Return Policy', 'kind': 'page'}, {'title': 'Order Cancellation Policy', 'kind': 'page'}, {'title': 'FAQ', 'kind': 'page'}, {'title': 'About Us', 'kind': 'page'}, {'title': 'Track Order', 'kind': 'page'}, {'title': 'Contact Us', 'kind': 'page'}, {'title': 'Warranty Policy', 'kind': 'page'}, {'title': 'Contact Information', 'kind': 'legal_setting'}, {'title': 'Legal Notice', 'kind': 'legal_setting'}, {'title': 'Terms of Sale', 'kind': 'legal_setting'}]
+            elif 'products' in args[0]: mock_cursor.__iter__.return_value = []
+            return mock_cursor
+            
+        mock_c.execute.side_effect = mock_execute
+        mock_db.return_value.__enter__.return_value = mock_c
+        
+        async def mock_gql_side_effect(domain, token, query, variables=None):
+            if 'themes' in query: return {'themes': {'edges': [{'node': {'id': 'gid://shopify/Theme/111', 'name': 'Live', 'role': 'MAIN'}}]}}
+            return {}
+        mock_gql.side_effect = mock_gql_side_effect
+        
+        with patch('server.FERNET') as mock_fernet:
+            mock_fernet.decrypt.return_value = b'dec'
+            # Pass MAIN theme ID
+            res = client.post('/api/store/publish', json={'target_theme_id': 'gid://shopify/Theme/111'}, cookies=cookies)
+            
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("cannot be the live MAIN theme", res.json()['detail'])
 
 if __name__ == '__main__':
     unittest.main()
