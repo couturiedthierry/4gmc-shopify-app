@@ -51,7 +51,7 @@ PDF_TEMPLATES = {
       <li style="margin-bottom: 12px;">Cancelling an order? See our <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a> — requests must be made within {{cancellation_window_hours}} hours.</li>
       <li style="margin-bottom: 12px;">Returning an item? See our <a href="/policies/refund-policy">Refund & Return Policy</a> — {{return_window_days}} days from delivery.</li>
       <li style="margin-bottom: 12px;">Reporting a fault? See our <a href="/pages/warranty-policy">Warranty Policy</a> — one-year limited warranty, repair or replace.</li>
-      <li style="margin-bottom: 12px;">Tracking a delivery? See our <a href="/pages/track-order">Tracking Order page</a></li>
+      <li style="margin-bottom: 12px;">Tracking a delivery? See our <a href="/apps/track123">Tracking Order page</a></li>
     </ul>
   </div>
 
@@ -156,7 +156,7 @@ PDF_TEMPLATES = {
 <p>{{support_hours}} ({{support_timezone}}). Email: <a href="mailto:{{contact_email}}">{{contact_email}}</a>. Phone: <a href="tel:{{phone}}">{{phone}}</a>. Address: {{store_address}}.</p>
 
 <p><strong>Related Pages</strong><br>
-<a href="/policies/shipping-policy">Shipping Policy</a> - <a href="/policies/refund-policy">Refund & Return Policy</a> - <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a> - <a href="/pages/warranty-policy">Warranty Policy</a> - <a href="/policies/payment-policy">Payment Policy</a> - <a href="/pages/track-order">Track Order</a> - <a href="/pages/contact-us">Contact Us</a></p>
+<a href="/policies/shipping-policy">Shipping Policy</a> - <a href="/policies/refund-policy">Refund & Return Policy</a> - <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a> - <a href="/pages/warranty-policy">Warranty Policy</a> - <a href="/policies/payment-policy">Payment Policy</a> - <a href="/apps/track123">Track Order</a> - <a href="/pages/contact-us">Contact Us</a></p>
 """,
     "legal_notice": """<p>This website is operated for the {{store_name}} online store. The information below identifies the business contact details and explains key rules governing use of the site.</p>
 
@@ -277,8 +277,16 @@ PDF_TEMPLATES = {
 <h2>9. Governing Law & Changes to This Policy</h2>
 <p>This policy forms part of the store terms. The current policy version remains available at its public URL.</p>
 
-<h2>Contact Information</h2>
-<p>{{store_name}} | {{store_address}} | <a href="mailto:{{contact_email}}">{{contact_email}}</a> | <a href="tel:{{phone}}">{{phone}}</a> | {{support_hours}} ({{support_timezone}})</p>
+<h2>Get In Touch</h2>
+<p>Have a question about a product, an order, or the right tool for your project? We'd be glad to help.</p>
+<ul style="list-style: none; padding: 0;">
+  <li><strong>Address:</strong> {{store_address}}</li>
+  <li><strong>Email:</strong> <a href="mailto:{{contact_email}}">{{contact_email}}</a></li>
+  <li><strong>Phone:</strong> <a href="tel:{{phone}}">{{phone}}</a></li>
+</ul>
+<p>You can also review our <a href="/policies/shipping-policy">Shipping Policy</a>, <a href="/policies/refund-policy">Refund & Return Policy</a>, <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a>, and <a href="/policies/terms-of-service">Terms of Service</a> before you shop.</p>
+<p>Thank you for choosing {{store_name}}.</p>
+
 """,
     "shipping_policy": """<p>This policy explains where {{store_name}} ships, what delivery may cost, how long orders normally take and what customers should do if a shipment has a problem.</p>
 
@@ -309,11 +317,16 @@ PDF_TEMPLATES = {
 <h2>7. Damaged or Lost Packages</h2>
 <p>Customers should contact support promptly if a shipment arrives damaged or appears lost. {{store_name}} should investigate with the carrier and apply the remedy described by the Refund & Return Policy and any applicable consumer rights.</p>
 
-<h2>Related Policies</h2>
-<p><a href="/policies/refund-policy">Refund & Return Policy</a> - <a href="/pages/track-order">Track Order</a> - <a href="/policies/privacy-policy">Privacy Policy</a> - <a href="/policies/terms-of-service">Terms of Service</a> - <a href="/pages/contact-us">Contact Us</a></p>
+<h2>Get In Touch</h2>
+<p>Have a question about a product, an order, or the right tool for your project? We'd be glad to help.</p>
+<ul style="list-style: none; padding: 0;">
+  <li><strong>Address:</strong> {{store_address}}</li>
+  <li><strong>Email:</strong> <a href="mailto:{{contact_email}}">{{contact_email}}</a></li>
+  <li><strong>Phone:</strong> <a href="tel:{{phone}}">{{phone}}</a></li>
+</ul>
+<p>You can also review our <a href="/policies/shipping-policy">Shipping Policy</a>, <a href="/policies/refund-policy">Refund & Return Policy</a>, <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a>, and <a href="/policies/terms-of-service">Terms of Service</a> before you shop.</p>
+<p>Thank you for choosing {{store_name}}.</p>
 
-<h2>Contact Information</h2>
-<p>{{store_name}} | {{store_address}} | <a href="mailto:{{contact_email}}">{{contact_email}}</a> | <a href="tel:{{phone}}">{{phone}}</a> | {{support_hours}} ({{support_timezone}})</p>
 """,
     "refund_return_policy": """<p>{{store_name}} wants customers to understand return eligibility before purchasing. This policy defines the return window, condition rules, return process, fees, exchanges and refund timing.</p>
 <p>Read this with Warranty Policy, Order Cancellation Policy and Shipping Policy.</p>
@@ -348,11 +361,16 @@ PDF_TEMPLATES = {
 <h2>10. Cancellations</h2>
 <p>If an order has not progressed too far, the customer may request cancellation under the Order Cancellation Policy within {{cancellation_window_hours}} hours. After shipment, the return policy normally applies instead.</p>
 
-<h2>Related Policies</h2>
-<p><a href="/policies/shipping-policy">Shipping Policy</a> - <a href="/pages/track-order">Track Order</a> - <a href="/pages/warranty-policy">Warranty Policy</a> - <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a> - <a href="/policies/privacy-policy">Privacy Policy</a> - <a href="/policies/terms-of-service">Terms of Service</a> - <a href="/pages/contact-us">Contact Us</a></p>
+<h2>Get In Touch</h2>
+<p>Have a question about a product, an order, or the right tool for your project? We'd be glad to help.</p>
+<ul style="list-style: none; padding: 0;">
+  <li><strong>Address:</strong> {{store_address}}</li>
+  <li><strong>Email:</strong> <a href="mailto:{{contact_email}}">{{contact_email}}</a></li>
+  <li><strong>Phone:</strong> <a href="tel:{{phone}}">{{phone}}</a></li>
+</ul>
+<p>You can also review our <a href="/policies/shipping-policy">Shipping Policy</a>, <a href="/policies/refund-policy">Refund & Return Policy</a>, <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a>, and <a href="/policies/terms-of-service">Terms of Service</a> before you shop.</p>
+<p>Thank you for choosing {{store_name}}.</p>
 
-<h2>Contact Information</h2>
-<p>{{store_name}} | {{store_address}} | <a href="mailto:{{contact_email}}">{{contact_email}}</a> | <a href="tel:{{phone}}">{{phone}}</a> | {{support_hours}} ({{support_timezone}})</p>
 """,
     "order_cancellation_policy": """<p>{{store_name}} may begin processing orders soon after purchase. This policy explains when a cancellation can be requested, how the request is submitted and what happens after the cancellation window has closed.</p>
 
@@ -383,11 +401,16 @@ PDF_TEMPLATES = {
 <h2>9. Changes to This Policy</h2>
 <p>The current version of this policy remains available at its public URL. Material operational changes should be reflected consistently in checkout, FAQ and Merchant Center where relevant.</p>
 
-<h2>Related Policies</h2>
-<p><a href="/policies/refund-policy">Refund & Return Policy</a> - <a href="/policies/shipping-policy">Shipping Policy</a> - <a href="/pages/track-order">Track Order</a> - <a href="/policies/privacy-policy">Privacy Policy</a> - <a href="/policies/terms-of-service">Terms of Service</a> - <a href="/pages/legal-notice">Legal Notice</a> - <a href="/pages/contact-us">Contact Us</a></p>
+<h2>Get In Touch</h2>
+<p>Have a question about a product, an order, or the right tool for your project? We'd be glad to help.</p>
+<ul style="list-style: none; padding: 0;">
+  <li><strong>Address:</strong> {{store_address}}</li>
+  <li><strong>Email:</strong> <a href="mailto:{{contact_email}}">{{contact_email}}</a></li>
+  <li><strong>Phone:</strong> <a href="tel:{{phone}}">{{phone}}</a></li>
+</ul>
+<p>You can also review our <a href="/policies/shipping-policy">Shipping Policy</a>, <a href="/policies/refund-policy">Refund & Return Policy</a>, <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a>, and <a href="/policies/terms-of-service">Terms of Service</a> before you shop.</p>
+<p>Thank you for choosing {{store_name}}.</p>
 
-<h2>Contact Information</h2>
-<p>{{store_name}} | {{store_address}} | <a href="mailto:{{contact_email}}">{{contact_email}}</a> | <a href="tel:{{phone}}">{{phone}}</a> | {{support_hours}} ({{support_timezone}})</p>
 """,
     "warranty_policy": """<p>{{warranty_intro}}</p>
 
@@ -418,11 +441,16 @@ PDF_TEMPLATES = {
 <h2>9. Governing Law & Changes to This Policy</h2>
 <p>Where configured, this policy is governed by {{governing_region}}. Claims are assessed under the terms applicable at the time of purchase.</p>
 
-<h2>Related Policies</h2>
-<p><a href="/policies/refund-policy">Refund & Return Policy</a> - <a href="/policies/shipping-policy">Shipping Policy</a> - <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a> - <a href="/pages/track-order">Track Order</a> - <a href="/policies/privacy-policy">Privacy Policy</a> - <a href="/policies/terms-of-service">Terms of Service</a> - <a href="/pages/legal-notice">Legal Notice</a> - <a href="/pages/contact-us">Contact Us</a></p>
+<h2>Get In Touch</h2>
+<p>Have a question about a product, an order, or the right tool for your project? We'd be glad to help.</p>
+<ul style="list-style: none; padding: 0;">
+  <li><strong>Address:</strong> {{store_address}}</li>
+  <li><strong>Email:</strong> <a href="mailto:{{contact_email}}">{{contact_email}}</a></li>
+  <li><strong>Phone:</strong> <a href="tel:{{phone}}">{{phone}}</a></li>
+</ul>
+<p>You can also review our <a href="/policies/shipping-policy">Shipping Policy</a>, <a href="/policies/refund-policy">Refund & Return Policy</a>, <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a>, and <a href="/policies/terms-of-service">Terms of Service</a> before you shop.</p>
+<p>Thank you for choosing {{store_name}}.</p>
 
-<h2>Contact Information</h2>
-<p>{{store_name}} | {{store_address}} | <a href="mailto:{{contact_email}}">{{contact_email}}</a> | <a href="tel:{{phone}}">{{phone}}</a> | {{support_hours}} ({{support_timezone}})</p>
 """,
     "terms_of_service": """
 <h2>OVERVIEW</h2>
@@ -500,13 +528,15 @@ PDF_TEMPLATES = {
 <h2>SECTION 24 - CHANGES TO TERMS OF SERVICE</h2>
 <p>The current Terms remain available at this public URL. Material changes should be posted with an updated effective date and any notice required by law.</p>
 
-<h2>SECTION 25 - CONTACT INFORMATION</h2>
-<ul>
-  <li><strong>Business Name:</strong> {{legal_business_name}}</li>
+<h2>Get In Touch</h2>
+<p>Have a question about a product, an order, or the right tool for your project? We'd be glad to help.</p>
+<ul style="list-style: none; padding: 0;">
   <li><strong>Address:</strong> {{store_address}}</li>
   <li><strong>Email:</strong> <a href="mailto:{{contact_email}}">{{contact_email}}</a></li>
   <li><strong>Phone:</strong> <a href="tel:{{phone}}">{{phone}}</a></li>
-  <li><strong>Business Hours:</strong> {{support_hours}} ({{support_timezone}})</li>
 </ul>
+<p>You can also review our <a href="/policies/shipping-policy">Shipping Policy</a>, <a href="/policies/refund-policy">Refund & Return Policy</a>, <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a>, and <a href="/policies/terms-of-service">Terms of Service</a> before you shop.</p>
+<p>Thank you for choosing {{store_name}}.</p>
+
 """,
 }

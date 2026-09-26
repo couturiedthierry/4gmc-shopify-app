@@ -2103,7 +2103,7 @@ def site_kit_plan(c):
     target_kinds = [
         'shipping', 'returns', 'privacy', 'terms', 'contact_information', 
         'legal_notice', 'contact', 'faq', 'about_us', 
-        'cancellation_policy', 'warranty_policy', 'track_order'
+        'cancellation_policy', 'warranty_policy'
     ]
     
     by_kind = {}
@@ -2883,7 +2883,7 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
         target_kinds = [
             'shipping', 'returns', 'privacy', 'terms', 'contact_information', 
             'legal_notice', 'contact', 'faq', 'about_us', 
-            'cancellation_policy', 'warranty_policy', 'track_order'
+            'cancellation_policy', 'warranty_policy'
         ]
         
         items = []
@@ -3735,7 +3735,7 @@ def build_store_design_spec(store, collections: list) -> dict:
                 {'title': 'FAQ', 'url': '/pages/faq'},
                 {'title': 'Shop', 'url': '/collections/all'},
                 {'title': 'About Us', 'url': '/pages/about-us'},
-                {'title': 'Track Order', 'url': '/pages/track-order'},
+                {'title': 'Track Order', 'url': '/apps/track123'},
                 {'title': 'Contact Us', 'url': '/pages/contact-us'},
             ]
         },
