@@ -50,10 +50,10 @@ PDF_TEMPLATES = {
 <p>Orders are normally prepared within {{handling_time}}. After dispatch, estimated transit time is {{transit_time}}, giving an overall estimate of {{estimated_delivery_time}}. Delivery dates are estimates and may be affected by carrier conditions.</p>
 
 <h3>How much does shipping cost?</h3>
-<p>{{shipping_cost_text}}. Any charge that applies to a specific order must be visible before the customer completes checkout.</p>
+<p>{{shipping_cost_text}}.</p>
 
 <h3>Where do you ship?</h3>
-<p>Current shipping destination: {{shipping_destination}}. Do not state international availability unless it is actually configured.</p>
+<p>Current shipping destination: {{shipping_destination}}.</p>
 
 <h3>Are there niche-specific shipping restrictions?</h3>
 <p>{{niche_shipping_clause}}</p>
@@ -61,7 +61,7 @@ PDF_TEMPLATES = {
 <h2>2. Orders & Tracking</h2>
 
 <h3>How can I track my order?</h3>
-<p>When tracking is available, the customer receives shipment confirmation and a tracking reference. Tracking may take {{tracking_update_time}} to become active after dispatch. Link to the store's <a href="/pages/track-order">Track Order</a> route.</p>
+<p>When tracking is available, the customer receives shipment confirmation and a tracking reference. Tracking may take {{tracking_update_time}} to become active after dispatch.</p>
 
 <h3>Can I change or cancel my order?</h3>
 <p>Requests should be sent as soon as possible. If the configured cancellation window is {{cancellation_window_hours}} hours, the request must arrive within that period and before processing makes the change impossible. See <a href="/pages/order-cancellation-policy">Order Cancellation Policy</a>.</p>
@@ -72,10 +72,10 @@ PDF_TEMPLATES = {
 <p>Eligible items may be requested for return within {{return_window_days}} days of the applicable start date defined in the Refund & Return Policy. Returned items must meet the policy's condition and authorization requirements.</p>
 
 <h3>How do I start a return?</h3>
-<p>Contact <a href="mailto:{{contact_email}}">{{contact_email}}</a> with the order number and reason for return. Do not instruct customers to ship an item before the return is authorized and return instructions are provided.</p>
+<p>Contact <a href="mailto:{{contact_email}}">{{contact_email}}</a> with the order number and reason for return.</p>
 
 <h3>Who pays for return shipping?</h3>
-<p>{{return_fee_text}}. This statement must match the Refund & Return Policy and Merchant Center configuration.</p>
+<p>{{return_fee_text}}.</p>
 
 <h3>When will I receive my refund?</h3>
 <p>Approved refunds are sent to the original payment method within {{refund_processing_time}}, after any required inspection. The customer's bank may need additional time to post the transaction.</p>
@@ -91,7 +91,7 @@ PDF_TEMPLATES = {
 <h2>5. Products & Choosing the Right {{product_term}}</h2>
 
 <h3>How do I choose the right product?</h3>
-<p>Use the specifications, intended-use information and compatibility details shown on each product page. For niche-specific questions, contact support rather than publishing guessed recommendations.</p>
+<p>Use the specifications, intended-use information and compatibility details shown on each product page.</p>
 
 <h3>Are product images accurate?</h3>
 <p>Product images are intended to represent the item accurately, but screen settings and normal manufacturing variation can affect color or finish. Product specifications take precedence where appearance and specification differ.</p>
@@ -99,10 +99,10 @@ PDF_TEMPLATES = {
 <h2>6. Payments & Security</h2>
 
 <h3>What payment methods do you accept?</h3>
-<p>{{payment_methods}}. Only list methods actually available at checkout.</p>
+<p>{{payment_methods}}.</p>
 
 <h3>When am I charged?</h3>
-<p>Use the payment processor's real checkout behavior. The Payment Policy must state whether authorization and capture occur at order placement or another configured stage.</p>
+<p>Use the payment processor's real checkout behavior.</p>
 
 <h2>7. Support Hours</h2>
 <p>{{support_hours}} ({{support_timezone}}). Email: <a href="mailto:{{contact_email}}">{{contact_email}}</a>. Phone: <a href="tel:{{phone}}">{{phone}}</a>. Address: {{store_address}}.</p>
@@ -134,7 +134,7 @@ PDF_TEMPLATES = {
 <p>Customers should first contact <a href="mailto:{{contact_email}}">{{contact_email}}</a> so the store can attempt to resolve a complaint directly. Where a governing region is configured, applicable disputes are handled under the laws and procedures of {{governing_region}}, subject to mandatory consumer protections.</p>
 
 <h2>5. Business Operations</h2>
-<p>{{store_name}} operates an online retail store focused on {{product_term}} as described by: {{product_niche}}. Sales regions, shipping availability and payment methods are limited to the options actually configured for the store.</p>
+<p>{{store_name}} operates an online retail store focused on {{product_term}} as described by: {{product_niche}}.</p>
 
 <h2>6. Product Safety</h2>
 <p>{{niche_safety_clause}}</p>
@@ -150,7 +150,7 @@ PDF_TEMPLATES = {
 <p>{{store_name}} operates {{domain_name}} and uses Shopify and other configured service providers to deliver the online store. This policy explains the categories of personal information that may be processed when customers browse, communicate with the store or complete a transaction.</p>
 
 <h2>Personal Information We Collect or Process</h2>
-<p>Depending on the customer interaction, information may include contact details, billing and shipping details, transaction records, account information, support messages, device/network data and usage information. Payment-card data is handled by the configured payment service rather than being intentionally stored in full by the merchant application.</p>
+<p>Depending on the customer interaction, information may include contact details, billing and shipping details, transaction records, account information, support messages, device/network data and usage information.</p>
 
 <h2>Personal Information Sources</h2>
 <p>Information may come directly from customers, automatically from website interactions and cookies, from Shopify, from service providers acting for the store, and from third parties where permitted and relevant to the service.</p>
@@ -187,7 +187,7 @@ PDF_TEMPLATES = {
 <p>Privacy questions or complaints should first be sent to <a href="mailto:{{contact_email}}">{{contact_email}}</a>. Customers may also have a right to contact a local data-protection authority depending on where they live.</p>
 
 <h2>International Transfers</h2>
-<p>Service providers may process information in countries other than the customer's country. Where required, transfers should use safeguards recognized under applicable law. Do not name a transfer mechanism unless the store actually relies on it.</p>
+<p>Service providers may process information in countries other than the customer's country. Where required, transfers should use safeguards recognized under applicable law.</p>
 
 <h2>Changes to This Privacy Policy</h2>
 <p>This policy may be updated to reflect operational, legal or service changes. The current version should remain available at the same public URL and display an updated effective date.</p>
@@ -206,7 +206,7 @@ PDF_TEMPLATES = {
 <p>Read this together with Terms of Service, Refund & Return Policy, Order Cancellation Policy and Privacy Policy.</p>
 
 <h2>1. Accepted Payment Methods</h2>
-<p>{{payment_methods}}. The checkout screen is the final source of truth for which methods are available to a specific customer. Do not list cash, COD, PayPal, Shop Pay, Apple Pay, Google Pay or any card network unless it is actually enabled.</p>
+<p>{{payment_methods}}.</p>
 
 <h2>2. Payment Security & Encryption</h2>
 <p>Checkout is provided through {{payment_processor}} and Shopify where applicable. Payment data should be transmitted using HTTPS/TLS and handled by the configured payment provider. {{store_name}} should not claim to store full card data unless it truly does.</p>
@@ -239,10 +239,10 @@ PDF_TEMPLATES = {
 <p>This policy explains where {{store_name}} ships, what delivery may cost, how long orders normally take and what customers should do if a shipment has a problem.</p>
 
 <h2>1. Shipping Destinations</h2>
-<p>Orders are currently shipped to: {{shipping_destination}}. Do not state international shipping unless the store configuration supports it.</p>
+<p>Orders are currently shipped to: {{shipping_destination}}.</p>
 
 <h2>2. Shipping Cost</h2>
-<p>{{shipping_cost_text}}. Any shipping charge that applies to a particular order must be disclosed before checkout is completed.</p>
+<p>{{shipping_cost_text}}.</p>
 
 <h2>3. Order Processing & Transit Time</h2>
 <ul>
@@ -254,7 +254,7 @@ PDF_TEMPLATES = {
 <p>Business-day calculations should follow the store's configured calendar and should exclude holidays where applicable.</p>
 
 <h2>4. Order Tracking</h2>
-<p>After dispatch, customers should receive available tracking information. Tracking may require {{tracking_update_time}} to update after the carrier first receives the shipment. Link this section to <a href="/pages/track-order">Track Order</a>.</p>
+<p>After dispatch, customers should receive available tracking information. Tracking may require {{tracking_update_time}} to update after the carrier first receives the shipment.</p>
 
 <h2>5. Shipping Method</h2>
 <p>Use the actual carrier/service logic configured by the store. Do not name USPS, UPS, FedEx or another carrier unless the store can genuinely use it.</p>
@@ -276,19 +276,19 @@ PDF_TEMPLATES = {
 <p>Read this with Warranty Policy, Order Cancellation Policy and Shipping Policy.</p>
 
 <h2>1. {{return_window_days}}-Day Return Window</h2>
-<p>Eligible return requests must be submitted within {{return_window_days}} days from the policy's configured start point, normally delivery. If no returns are offered for a product category, the template must clearly state that instead of showing a fictitious window.</p>
+<p>Eligible return requests must be submitted within {{return_window_days}} days from the policy's configured start point, normally delivery.</p>
 
 <h2>2. Return Eligibility</h2>
-<p>Returned goods should be in the condition required by the store policy, with relevant packaging, accessories and proof of purchase. The implementation should insert any niche-specific condition rules from {{niche_return_restrictions}}.</p>
+<p>Returned goods should be in the condition required by the store policy, with relevant packaging, accessories and proof of purchase. {{niche_return_restrictions}}</p>
 
 <h2>3. Niche-Specific Restricted or Used Products</h2>
-<p>{{niche_return_restrictions}}. Hide this section when no special restriction is needed. Never copy gas/fuel restrictions into unrelated niches such as apparel or pet supplies.</p>
+<p>{{niche_return_restrictions}}.</p>
 
 <h2>4. How to Return ({{return_method}})</h2>
 <p>Customers begin a return by contacting <a href="mailto:{{contact_email}}">{{contact_email}}</a> with their order number and reason for return. The store provides authorization and the correct return instructions. Unrequested parcels may be refused where lawful and clearly disclosed.</p>
 
 <h2>5. Return Shipping Costs</h2>
-<p>{{return_fee_text}}. Restocking fee: {{restocking_fee_text}}. These values must match Merchant Center and any checkout/storefront statements.</p>
+<p>{{return_fee_text}}. Restocking fee: {{restocking_fee_text}}.</p>
 
 <h2>6. Damaged, Wrong Products, or Issues</h2>
 <p>Customers should inspect orders after delivery and contact support promptly about damaged, defective or incorrect items. Transit damage should also be handled consistently with the Shipping Policy.</p>
@@ -300,7 +300,7 @@ PDF_TEMPLATES = {
 <p>After any required inspection, approved refunds are issued to the original payment method within {{refund_processing_time}}. The customer's bank or card issuer may take additional time to display the credit.</p>
 
 <h2>9. Non-Returnable Items</h2>
-<p>{{non_returnable_items}}. If the store has no special list, omit this section rather than inventing exclusions.</p>
+<p>{{non_returnable_items}}.</p>
 
 <h2>10. Cancellations</h2>
 <p>If an order has not progressed too far, the customer may request cancellation under the Order Cancellation Policy within {{cancellation_window_hours}} hours. After shipment, the return policy normally applies instead.</p>
@@ -327,7 +327,7 @@ PDF_TEMPLATES = {
 <p>When a cancellation is successfully confirmed, any captured eligible amount is returned to the original payment method within {{refund_processing_time}}. External payment providers may require additional posting time.</p>
 
 <h2>5. Items That Cannot Be Cancelled</h2>
-<p>{{non_cancellable_items}}. Omit this list if the store does not have category-specific restrictions.</p>
+<p>{{non_cancellable_items}}.</p>
 
 <h2>6. Cancellations by {{store_name}}</h2>
 <p>{{store_name}} may cancel an order when an item is unavailable, a material pricing/listing error exists, payment cannot be verified, the delivery address is unsupported, or another legitimate fulfillment issue prevents the sale. Any captured amount for the cancelled portion should be refunded appropriately.</p>
@@ -351,28 +351,28 @@ PDF_TEMPLATES = {
 <p>{{warranty_intro}}</p>
 
 <h2>1. What Is Covered</h2>
-<p>Covered defects are limited to the defects and product categories actually included in the store's warranty configuration. A typical limited warranty may cover defects in materials or workmanship arising under normal intended use and proper maintenance.</p>
+<p>Covered defects are limited to the defects and product categories actually included in the store's warranty configuration.</p>
 
 <h2>2. Our Remedy</h2>
-<p>For an approved claim, {{store_name}} may repair, replace or provide another remedy stated in the configured warranty. Do not promise refunds under warranty unless that remedy is actually offered.</p>
+<p>For an approved claim, {{store_name}} may repair, replace or provide another remedy stated in the configured warranty.</p>
 
 <h2>3. What Is Not Covered</h2>
-<p>{{warranty_exclusions}}. Typical exclusions may include normal wear, consumables, misuse, accidents, unauthorized modification or failure to follow product instructions, but only include exclusions appropriate to the niche and applicable law.</p>
+<p>{{warranty_exclusions}}.</p>
 
 <h2>4. How to Make a Warranty Claim</h2>
-<p>Email <a href="mailto:{{contact_email}}">{{contact_email}}</a> with the order number, proof of purchase, product identification, a description of the fault and supporting media where useful. Customers should not ship a product until return/inspection instructions are provided.</p>
+<p>Email <a href="mailto:{{contact_email}}">{{contact_email}}</a> with the order number, proof of purchase, product identification, a description of the fault and supporting media where useful.</p>
 
 <h2>5. Shipping Costs on Warranty Claims</h2>
-<p>{{warranty_shipping_cost_text}}. This value must be configured and consistent with the store's actual claim process.</p>
+<p>{{warranty_shipping_cost_text}}.</p>
 
 <h2>6. Warranty vs. Returns - Which Applies?</h2>
-<p>Returns address purchase suitability and eligible post-delivery returns within {{return_window_days}} days. Cancellation addresses pre-fulfillment requests within {{cancellation_window_hours}} hours. Warranty addresses covered defects during {{warranty_period}}. Keep these three concepts distinct.</p>
+<p>Returns address purchase suitability and eligible post-delivery returns within {{return_window_days}} days. Cancellation addresses pre-fulfillment requests within {{cancellation_window_hours}} hours. Warranty addresses covered defects during {{warranty_period}}.</p>
 
 <h2>7. Transferability</h2>
-<p>{{warranty_transferability_text}}. Do not assume non-transferability unless that is the chosen warranty term and lawful for the target market.</p>
+<p>{{warranty_transferability_text}}.</p>
 
 <h2>8. Limitations and Your Statutory Rights</h2>
-<p>The limited warranty does not remove consumer rights that cannot legally be excluded. Avoid absolute disclaimers that conflict with mandatory local law.</p>
+<p>The limited warranty does not remove consumer rights that cannot legally be excluded.</p>
 
 <h2>9. Governing Law & Changes to This Policy</h2>
 <p>Where configured, this policy is governed by {{governing_region}}. The store may update future warranty terms, while claims should be assessed under the terms applicable to the purchase where required.</p>
