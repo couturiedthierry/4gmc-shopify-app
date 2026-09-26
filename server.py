@@ -3844,7 +3844,7 @@ async def build_store_design(data: StoreDesignInput, request: Request):
     return job
 
 async def shopify_rest(domain: str, token: str, method: str, path: str, json_data: dict = None):
-    url = f'https://{domain}/admin/api/2026-01/{path}'
+    url = f'https://{domain}/admin/api/{SHOPIFY_API_VERSION}/{path}'
     headers = {'X-Shopify-Access-Token': token, 'Content-Type': 'application/json'}
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.request(method, url, headers=headers, json=json_data)
@@ -3908,6 +3908,183 @@ async def upload_product_image(product_id: int, request: Request):
     return {'ok': True, 'url': url}
 
 @app.post('/api/store/publish')
+async def publish_store(request: Request):
+    require(request)
+    store_id = ACTIVE_STORE_ID.get()
+    
+    with db() as c:
+        store = store_row(c)
+        pages = [dict(r) for r in c.execute('SELECT title, kind FROM pages WHERE store_id=?', (store_id,))]
+        products = [dict(r) for r in c.execute('SELECT id, images, shopify_id FROM products WHERE store_id=?', (store_id,))]
+        
+    required_pages = ['Legal Notice', 'Privacy Policy', 'Payment Policy', 'Shipping Policy', 'Terms of Service', 'Refund and Return Policy', 'Order Cancellation Policy', 'FAQ', 'About Us', 'Track Order', 'Contact Us', 'Warranty Policy']
+    required_legal = ['Contact Information', 'Legal Notice', 'Terms of Sale']
+    
+    missing = []
+    generated_pages = [p['title'].lower() for p in pages if p['kind'] in ('page', 'policy')]
+    generated_settings = [p['title'].lower() for p in pages if p['kind'] == 'legal_setting']
+    
+    for req in required_pages:
+        if req.lower() not in generated_pages:
+            missing.append(f"Page: {req}")
+    for req in required_legal:
+        if req.lower() not in generated_settings:
+            missing.append(f"Legal Setting: {req}")
+            
+    if missing:
+        return {'ok': False, 'missing': missing}
+
+    token = store.get('shopify_token')
+    if token: token = FERNET.decrypt(token.encode()).decode()
+    if not token: fail('Shopify not connected', 400)
+    domain = store['domain']
+
+    logs = []
+    logs.append(f"=== EXECUTION MODE: {'DRY RUN' if DRY_RUN else 'LIVE'} ===")
+    
+    import httpx
+    import json
+    
+    # --- HELPER FOR STAGED UPLOADS ---
+    async def upload_shopify_media(filepath, log_prefix=""):
+        filename = filepath.split('/')[-1]
+        mime_type = "image/jpeg"
+        if filename.endswith(".png"): mime_type = "image/png"
+        elif filename.endswith(".webp"): mime_type = "image/webp"
+
+        staged_mutation = """mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+          stagedUploadsCreate(input: $input) {
+            stagedTargets { url resourceUrl parameters { name value } }
+            userErrors { field message }
+          }
+        }"""
+        staged_vars = {"input": [{"resource": "IMAGE", "filename": filename, "mimeType": mime_type, "httpMethod": "POST"}]}
+        
+        target_url = "mock-url"
+        resource_url = "mock-resource"
+        
+        if not DRY_RUN:
+            res = await shopify_graphql(domain, token, staged_mutation, staged_vars)
+            data = res.get('stagedUploadsCreate', {})
+            if data.get('userErrors'): fail(f"{log_prefix}Staged upload error: {data['userErrors']}", 400)
+            target = data['stagedTargets'][0]
+            target_url = target['url']
+            resource_url = target['resourceUrl']
+            
+            with open(filepath, 'rb') as img_f:
+                files = {'file': (filename, img_f, mime_type)}
+                data_params = {p['name']: p['value'] for p in target['parameters']}
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(target_url, data=data_params, files=files)
+                    if resp.status_code >= 400:
+                        fail(f"{log_prefix}Staging upload failed: {resp.text}", 500)
+            logs.append(f"{log_prefix}[HTTP POST] Uploaded {filename} bytes to {target_url}")
+        else:
+            logs.append(f"{log_prefix}[DRY RUN] Skipped HTTP POST to staging for {filename}")
+        return resource_url
+
+    # --- STAGE 4: PRODUCT MEDIA UPLOAD ---
+    logs.append("=== STAGE 4: PRODUCT MEDIA UPLOAD ===")
+    for prod in products:
+        images = json.loads(prod['images'] or '[]')
+        if not images:
+            logs.append(f"Product {prod['id']} has no uploaded images. Using placeholder logic. (Skipping media attach)")
+            continue
+            
+        for img_url in images:
+            filepath = os.path.join('data/product-images', img_url.split('/')[-1])
+            resource_url = await upload_shopify_media(filepath, log_prefix=f"Prod {prod['id']} - ")
+                
+            media_mutation = """mutation productUpdate($input: ProductInput!, $media: [CreateMediaInput!]) {
+              productUpdate(input: $input, media: $media) {
+                product { id }
+                userErrors { field message }
+              }
+            }"""
+            media_vars = {
+                "input": {"id": prod.get('shopify_id', f"gid://shopify/Product/{prod['id']}")},
+                "media": [{"mediaContentType": "IMAGE", "originalSource": resource_url}]
+            }
+            if not DRY_RUN:
+                res = await shopify_graphql(domain, token, media_mutation, media_vars)
+                if res.get('productUpdate', {}).get('userErrors'):
+                    fail(f"Media attach error: {res['productUpdate']['userErrors']}", 400)
+                logs.append(f"   -> [GraphQL] Attached {resource_url} to Product {prod.get('shopify_id')}")
+            else:
+                logs.append("   -> [DRY RUN] Skipped productUpdate mutation.")
+
+    # --- STAGE 5: THEME GENERATION ---
+    logs.append("\n=== STAGE 5: THEME GENERATION ===")
+    theme_query = "{ themes(first: 10) { edges { node { id name role } } } }"
+    
+    if not DRY_RUN:
+        res = await shopify_graphql(domain, token, theme_query)
+        themes = [edge['node'] for edge in res.get('themes', {}).get('edges', [])]
+        main_theme = next((t for t in themes if t['role'] == 'MAIN'), None)
+        if not main_theme: fail("No main theme found", 500)
+        
+        dup_res = await shopify_rest(domain, token, 'POST', 'themes.json', {"theme": {"name": "4GMC Staging Theme", "src": main_theme['id'].split('/')[-1]}})
+        dup_id = dup_res.get('theme', {}).get('id')
+        
+        index_res = await shopify_rest(domain, token, 'GET', f'themes/{dup_id}/assets.json?asset[key]=templates/index.json')
+        asset = index_res.get('asset', {}).get('value')
+        if asset:
+            index_json = json.loads(asset)
+            # Add section preserving unrelated settings
+            index_json.setdefault('sections', {})['gmc_hero'] = {"type": "image-banner", "settings": {}}
+            if 'order' in index_json: index_json['order'].insert(0, 'gmc_hero')
+            
+            asset_payload = {'asset': {'key': 'templates/index.json', 'value': json.dumps(index_json)}}
+            await shopify_rest(domain, token, 'PUT', f'themes/{dup_id}/assets.json', asset_payload)
+            logs.append("[REST] Successfully generated actual index.json blocks on unpublished theme.")
+    else:
+        logs.append("   -> [DRY RUN] Skipped REST duplication and asset JSON injection.")
+
+    # --- STAGE 5: CHECKOUT BRANDING ---
+    logs.append("\n=== STAGE 5: CHECKOUT BRANDING ===")
+    if not DRY_RUN:
+        shop_res = await shopify_graphql(domain, token, "{ shop { plan { displayName partnerDevelopment } } }")
+        plan = shop_res.get('shop', {}).get('plan', {})
+        is_eligible = plan.get('displayName') == 'Shopify Plus' or plan.get('partnerDevelopment') is True
+    else:
+        is_eligible = False
+
+    if is_eligible and not DRY_RUN:
+        logo_id = None
+        logo_url = store.get('logo_url')
+        if logo_url:
+            filepath = os.path.join('data', logo_url.strip('/')) # Assuming stored in data/
+            resource_url = await upload_shopify_media(filepath, log_prefix="Checkout Logo - ")
+            
+            file_create_mutation = """mutation fileCreate($files: [FileCreateInput!]!) {
+              fileCreate(files: $files) { files { id } userErrors { message } }
+            }"""
+            fc_vars = {"files": [{"originalSource": resource_url, "contentType": "IMAGE"}]}
+            fc_res = await shopify_graphql(domain, token, file_create_mutation, fc_vars)
+            logo_id = fc_res.get('fileCreate', {}).get('files', [{}])[0].get('id')
+            
+        checkout_mutation = """mutation checkoutBrandingUpsert($checkoutBrandingInput: CheckoutBrandingInput!) {
+          checkoutBrandingUpsert(checkoutBrandingInput: $checkoutBrandingInput) {
+            checkoutBranding { designSystem { logo { imageId } } }
+            userErrors { field message }
+          }
+        }"""
+        design = {"colors": {"global": {"brand": "#000000"}}}
+        if logo_id: design["logo"] = {"imageId": logo_id}
+        c_vars = {"checkoutBrandingInput": {"designSystem": design}}
+        res = await shopify_graphql(domain, token, checkout_mutation, c_vars)
+        if res.get('checkoutBrandingUpsert', {}).get('userErrors'): fail(f"Checkout branding error", 500)
+        logs.append(f"[GraphQL] Successfully applied checkout logo ID: {logo_id}")
+    elif is_eligible and DRY_RUN:
+        logs.append("   -> [DRY RUN] Skipped Checkout Branding API execution.")
+    else:
+        logs.append("Checkout Branding skipped - Store lacks Plus/Dev eligibility.")
+
+    with db() as c: event(c, store_id, "Executed publish routine" + (" (DRY RUN)" if DRY_RUN else ""))
+    return {'ok': True, 'message': 'Publish routine completed.', 'logs': logs}
+
+
+
 async def publish_store(request: Request):
     require(request)
     store_id = ACTIVE_STORE_ID.get()
