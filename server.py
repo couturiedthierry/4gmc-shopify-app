@@ -13,6 +13,7 @@ import shopify_usa as usa
 import site_kit
 try:
     from static_pages.generator import generate_static_page
+    from static_pages.ai_context import get_or_generate_store_context
     STATIC_PAGES_ERROR = None
 except Exception as e:
     import traceback
@@ -20,6 +21,8 @@ except Exception as e:
     # Provide a dummy function so the rest of the file compiles
     def generate_static_page(*args, **kwargs):
         raise RuntimeError(f"Failed to load static_pages: {STATIC_PAGES_ERROR}")
+    async def get_or_generate_store_context(*args, **kwargs):
+        return {}
 
 import image_pipeline
 import catalog_rules
@@ -2096,7 +2099,7 @@ def site_kit_plan(c):
     target_kinds = [
         'shipping', 'returns', 'privacy', 'terms', 'contact_information', 
         'legal_notice', 'contact', 'faq', 'about_us', 
-        'cancellation_policy', 'warranty_policy'
+        'cancellation_policy', 'warranty_policy', 'track_order'
     ]
     
     by_kind = {}
@@ -2876,7 +2879,7 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
         target_kinds = [
             'shipping', 'returns', 'privacy', 'terms', 'contact_information', 
             'legal_notice', 'contact', 'faq', 'about_us', 
-            'cancellation_policy', 'warranty_policy'
+            'cancellation_policy', 'warranty_policy', 'track_order'
         ]
         
         items = []
@@ -2901,13 +2904,16 @@ async def generate_site_kit(data: SiteKitInput, progress=None):
         completed_count = 0
         
         if progress:
-            progress(f'Generating 0 of {len(items)} destination-brand pages...', 0, len(items))
+            progress(f'Generating AI brand context and static pages...', 0, len(items))
+            
+        with db() as c:
+            ai_context = await get_or_generate_store_context(c, store['id'], business, brand, ai_json)
             
         for item in items:
             kind = item['kind']
             title = item['title']
             
-            body = generate_static_page(kind, business, brand, force_variant=None)
+            body = generate_static_page(kind, business, brand, ai_context)
             
             guard = {
                 'version': 3,
@@ -3229,7 +3235,11 @@ async def prepare_page(page_id:int,request:Request):
     
     kind = page['kind']
     title = page.get('title') or kind.replace('_', ' ').title()
-    body = generate_static_page(kind, business, brand, force_variant=None)
+    
+    with db() as c:
+        ai_context = await get_or_generate_store_context(c, store['id'], business, brand, ai_json)
+        
+    body = generate_static_page(kind, business, brand, ai_context)
     
     with db() as c:
         c.execute("UPDATE pages SET title=?,body=?,status=?,reviewed_hash=?,brand_guard='' WHERE id=?",(title,body,'draft','',page_id))
@@ -3714,16 +3724,30 @@ def build_store_design_spec(store, collections: list) -> dict:
 
     footer_columns = [
         {
+            'id': 'quick_links',
+            'title': 'Quick Links',
+            'type': 'navigation_links',
+            'links': [
+                {'title': 'FAQ', 'url': '/pages/faq'},
+                {'title': 'Shop', 'url': '/collections/all'},
+                {'title': 'About Us', 'url': '/pages/about-us'},
+                {'title': 'Track Order', 'url': '/pages/track-order'},
+                {'title': 'Contact Us', 'url': '/pages/contact-us'},
+            ]
+        },
+        {
             'id': 'policies',
             'title': 'Our Policies',
             'type': 'policy_links',
             'links': [
-                {'title': 'Shipping Policy', 'url': '/policies/shipping-policy'},
-                {'title': 'Refund Policy', 'url': '/policies/refund-policy'},
-                {'title': 'Terms of Service', 'url': '/policies/terms-of-service'},
+                {'title': 'Legal Notice', 'url': '/pages/legal-notice'},
                 {'title': 'Privacy Policy', 'url': '/policies/privacy-policy'},
-                {'title': 'Legal Notice', 'url': '/policies/legal-notice'},
-                {'title': 'Contact Information', 'url': '/policies/contact-information'},
+                {'title': 'Payment Policy', 'url': '/pages/payment-policy'},
+                {'title': 'Shipping Policy', 'url': '/policies/shipping-policy'},
+                {'title': 'Terms of Service', 'url': '/policies/terms-of-service'},
+                {'title': 'Refund & Return Policy', 'url': '/policies/refund-policy'},
+                {'title': 'Order Cancellation Policy', 'url': '/pages/order-cancellation-policy'},
+                {'title': 'Warranty Policy', 'url': '/pages/warranty-policy'},
             ]
         },
         {
@@ -3733,16 +3757,6 @@ def build_store_design_spec(store, collections: list) -> dict:
             'links': [
                 {'title': 'All Products', 'url': '/collections/all'},
             ] + [{'title': c['title'], 'url': f"/collections/{c['handle']}"} for c in collections[:4]]
-        },
-        {
-            'id': 'quick_links',
-            'title': 'Quick Links',
-            'type': 'navigation_links',
-            'links': [
-                {'title': 'About Us', 'url': '/pages/about-us'},
-                {'title': 'Contact Us', 'url': '/pages/contact-us'},
-                {'title': 'FAQ', 'url': '/pages/faq'},
-            ]
         },
         {
             'id': 'store_info',
