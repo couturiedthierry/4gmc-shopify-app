@@ -217,7 +217,52 @@ function products(){
 }
 
 function storefrontPreview(snapshot){
- const brand=snapshot.brand;
+  if(snapshot.version === 2) {
+    const brandName = esc(snapshot.brand_name || 'Store');
+    const sectionsHtml = (snapshot.sections || []).map(sec => {
+      let icon = '???';
+      if(sec.type === 'hero') icon = 'Hero Banner';
+      else if(sec.type === 'collection_list') icon = 'Category List';
+      else if(sec.type === 'service_callouts') icon = 'Callouts / Icons';
+      else if(sec.type === 'featured_collection') icon = 'Products Carousel';
+      else if(sec.type === 'rich_text') icon = 'Text Block';
+      else if(sec.type === 'image_with_text') icon = 'Image + Text';
+      else if(sec.type === 'faq') icon = 'FAQ Accordion';
+      else if(sec.type === 'contact_form') icon = 'Contact Form';
+      else if(sec.type === 'announcement_bar') icon = 'Announcement';
+      else icon = sec.type;
+      
+      return `<div style="padding:16px; margin-bottom:8px; border:1px solid #e1e3e5; border-radius:8px; background:#fff;">
+        <strong>${icon}</strong>
+        <div style="font-size:13px; color:#6d7175; margin-top:4px;">${esc(sec.title || '')}</div>
+      </div>`;
+    }).join('');
+    
+    const footerHtml = (snapshot.footer_columns || []).map(col => {
+      return `<div style="flex:1; min-width:150px; padding:12px; background:#f4f6f8; border-radius:8px; margin-bottom:8px;">
+        <strong>${esc(col.title || 'Column')}</strong>
+        <div style="font-size:12px; color:#6d7175; margin-top:4px;">${esc(col.type)}</div>
+      </div>`;
+    }).join('');
+
+    return `<div class="preview generated" style="--store-primary:${esc(snapshot.primary_color)};--store-accent:${esc(snapshot.accent_color)}; padding:20px; background:#f9fafb;">
+      <h3 style="margin-top:0;">Live Theme Design Spec: ${brandName}</h3>
+      <p style="font-size:13px; color:#6d7175; margin-bottom:24px;">This layout has been securely mapped to your published Shopify theme.</p>
+      
+      <div style="margin-bottom:24px;">
+        <h4 style="margin-bottom:12px; color:#202223;">Homepage Sections</h4>
+        ${sectionsHtml}
+      </div>
+      
+      <div>
+        <h4 style="margin-bottom:12px; color:#202223;">Footer Layout</h4>
+        <div style="display:flex; gap:16px; flex-wrap:wrap;">
+          ${footerHtml}
+        </div>
+      </div>
+    </div>`;
+  }
+  const brand=snapshot.brand;
  const tabs=[{key:'home',title:'Home'},{key:'products',title:'Products'},...snapshot.pages.map(page=>({key:'page-'+page.id,title:page.title}))];
  const selected=tabs.some(tab=>tab.key===previewTab)?previewTab:'home';
  const nav=tabs.map(tab=>`<button type="button" data-preview-tab="${esc(tab.key)}" class="${selected===tab.key?'active':''}">${esc(tab.title)}</button>`).join('');
