@@ -64,6 +64,7 @@ async function refresh(){
    showToast(error?.message||error, true);
   }
 }
+  let selectedTargetThemeId = null;
   let storeDesignJob = null;
   let storeDesignPollTimer = null;
   async function pollStoreDesignJob(){
@@ -468,14 +469,16 @@ if (view === 'design' && data && data.store && data.store.connected) {
     api('/api/themes', 'GET').then(res => {
         const sel = document.getElementById('target-theme-select');
         if (sel && res.themes) {
-            const unpub = res.themes.filter(t => t.role !== 'MAIN');
+            const unpub = res.themes.filter(t => t.role === 'UNPUBLISHED');
             sel.innerHTML = '<option value="">-- Select an Unpublished Theme --</option>' + 
                 unpub.map(t => `<option value="${t.id}">${t.name} (${t.role})</option>`).join('');
             
-            // if there's only one unpublished theme or we want to pre-select
-            if (unpub.length > 0) {
-                sel.value = unpub[0].id;
+            if (selectedTargetThemeId) {
+                sel.value = selectedTargetThemeId;
             }
+            sel.addEventListener('change', e => {
+                selectedTargetThemeId = e.target.value;
+            });
         }
     }).catch(console.error);
 }
@@ -515,7 +518,7 @@ document.body.addEventListener('click',e=>{
   case 'review-product':perform(async()=>{await api(`/api/products/${id}/review`,'POST');return 'Product reviewed and ready for Shopify draft upload.';});break;
   case 'upload-product':if(window.confirm('Send this reviewed product to Shopify as a hidden draft?'))perform(async()=>{await api(`/api/products/${id}/upload`,'POST');return 'Shopify draft uploaded and checked. Images may still be processing.';});break;
   case 'close-product':editProduct=null;render();break;
-  case 'run-site-kit':perform(async()=>{siteKitPlan=await api('/api/site-kit/plan');const result=await publishStoreAction();siteKitPlan=await api('/api/site-kit/plan');siteKitLastRun=result.failed?`Published ${result.published.length} documents; stopped at ${result.failed}: ${result.detail}`:`Published ${result.published.length} pages and policies in Shopify.`;return siteKitLastRun;});break;
+  case 'run-site-kit':perform(async()=>{siteKitPlan=await api('/api/site-kit/plan');const result=await publishStoreAction();siteKitPlan=await api('/api/site-kit/plan');if(result && result.ok===false){siteKitLastRun=`Publication blocked. Missing: ${result.missing?result.missing.join(', '):'Unknown'}`;throw new Error(siteKitLastRun);}else if(result && result.ok){siteKitLastRun=`Store templates prepared successfully.`;return siteKitLastRun;}throw new Error(result?.error||'Unknown error');});break;
   case 'edit-page':editPage=id;render();break;
   case 'close-page':editPage=null;render();break;
   case 'prepare-product':perform(async()=>{await api(`/api/products/${id}/prepare`,'POST');return 'AI prepared a draft. Review it before use.';});break;
@@ -616,7 +619,8 @@ document.body.addEventListener('submit',e=>{
     siteKitPlan=await api('/api/site-kit/plan');
     stage('Publishing pages and policies to Shopify…');
     const pagesResult=await publishStoreAction();
-    if(pagesResult.failed)throw new Error('Page '+pagesResult.failed+': '+pagesResult.detail);
+    if(pagesResult && pagesResult.ok===false)throw new Error(`Publication blocked. Missing: ${pagesResult.missing?pagesResult.missing.join(', '):'Unknown'}`);
+    if(pagesResult && pagesResult.error)throw new Error(pagesResult.error);
     siteKitPlan=await api('/api/site-kit/plan');
    }
    stage('Scanning and curating up to 20 products across four collections…');
@@ -654,14 +658,12 @@ setInterval(async()=>{if(!data||!(view==='tasks'||(data.jobs||[]).some(job=>['qu
 refresh().catch(error=>showToast(error?.message||error,true));
 
 async function publishStoreAction() {
-    const sel = document.getElementById('target-theme-select');
-    const target_theme_id = sel ? sel.value : null;
-    if(!target_theme_id) {
+    if(!selectedTargetThemeId) {
         showToast("Please select an unpublished target theme first.", true);
         return {ok: false, error: "No target theme selected."};
     }
     try {
-        const result = await api('/api/store/publish', 'POST', {target_theme_id});
+        const result = await api('/api/store/publish', 'POST', {target_theme_id: selectedTargetThemeId});
         if (result.ok === false) {
             showToast(`Publication blocked. Missing: ${result.missing ? result.missing.join(', ') : 'Unknown'}`, true);
             return result;

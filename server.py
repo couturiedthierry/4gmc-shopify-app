@@ -42,7 +42,7 @@ for line in (ROOT / '.env').read_text(encoding='utf-8').splitlines() if (ROOT / 
     if line and not line.lstrip().startswith('#') and '=' in line:
         key, value = line.split('=', 1)
         os.environ.setdefault(key.strip(), value.strip().strip('"'))
-DB = ROOT / 'data' / 'studio.db'
+DB = Path(os.environ['DB_PATH']) if 'DB_PATH' in os.environ else ROOT / 'data' / 'studio.db'
 DB.parent.mkdir(exist_ok=True)
 SESSION_SECRET = os.environ.get('SESSION_SECRET', '')
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')

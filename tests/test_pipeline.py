@@ -208,7 +208,7 @@ class TestIntegration(unittest.TestCase):
             res = client.post('/api/store/publish', json={'target_theme_id': 'gid://shopify/Theme/111'}, cookies=cookies)
             
         self.assertEqual(res.status_code, 400)
-        self.assertIn("cannot be the live MAIN theme", res.json()['detail'])
+        self.assertIn("Target theme must be explicitly UNPUBLISHED", res.json()['detail'])
 
     @patch('server.db')
     @patch('server.DRY_RUN', True)
