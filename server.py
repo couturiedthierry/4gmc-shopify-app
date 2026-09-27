@@ -3908,7 +3908,7 @@ async def upload_product_image(product_id: int, request: Request):
     return {'ok': True, 'url': url}
 
 
-    token = store.get('shopify_token')
+    token = dict(store).get('shopify_token')
     if token: token = FERNET.decrypt(token.encode()).decode()
     if not token: fail('Shopify not connected', 400)
     domain = store['domain']
@@ -4065,7 +4065,7 @@ async def get_themes(request: Request):
     store_id = ACTIVE_STORE_ID.get()
     with db() as c:
         store = store_row(c)
-    token = store.get('shopify_token')
+    token = dict(store).get('shopify_token')
     if token: token = FERNET.decrypt(token.encode()).decode()
     if not token: fail('Shopify not connected', 400)
     
@@ -4075,7 +4075,7 @@ async def get_themes(request: Request):
     return {'ok': True, 'themes': themes}
 
 
-    token = store.get('shopify_token')
+    token = dict(store).get('shopify_token')
     if token: token = FERNET.decrypt(token.encode()).decode()
     if not token: fail('Shopify not connected', 400)
     domain = store['domain']
@@ -4262,7 +4262,7 @@ async def get_themes(request: Request):
 
 
 
-    token = store.get('shopify_token')
+    token = dict(store).get('shopify_token')
     if token: token = FERNET.decrypt(token.encode()).decode()
     if not token: fail('Shopify not connected', 400)
     domain = store['domain']
@@ -4354,7 +4354,7 @@ async def get_themes(request: Request):
         themes = [edge['node'] for edge in res.get('themes', {}).get('edges', [])]
         target_theme = next((t for t in themes if t['id'] == target_theme_id), None)
         if not target_theme: fail(f"Theme {target_theme_id} not found.", 404)
-        if target_theme['role'] == 'MAIN': fail("Target theme cannot be the live MAIN theme. Select an unpublished theme.", 400)
+        if target_theme['role'] != 'UNPUBLISHED': fail("Target theme must be explicitly UNPUBLISHED.", 400)
         
         target_id_num = target_theme_id.split('/')[-1]
         logs.append(f"Target theme validated: {target_theme['name']} (UNPUBLISHED)")
@@ -4518,7 +4518,7 @@ async def publish_store(request: Request):
     if missing:
         return {'ok': False, 'missing': missing}
 
-    token = store.get('shopify_token')
+    token = dict(store).get('shopify_token')
     if token: token = FERNET.decrypt(token.encode()).decode()
     if not token: fail('Shopify not connected', 400)
     domain = store['domain']
@@ -4539,7 +4539,7 @@ async def publish_store(request: Request):
         themes = [edge['node'] for edge in res.get('themes', {}).get('edges', [])]
         target_theme = next((t for t in themes if t['id'] == target_theme_id), None)
         if not target_theme: fail(f"Theme {target_theme_id} not found.", 404)
-        if target_theme['role'] == 'MAIN': fail("Target theme cannot be the live MAIN theme. Select an unpublished theme.", 400)
+        if target_theme['role'] != 'UNPUBLISHED': fail("Target theme must be explicitly UNPUBLISHED.", 400)
         
         target_id_num = target_theme_id.split('/')[-1]
         logs.append(f"Target theme validated: {target_theme['name']} (UNPUBLISHED)")

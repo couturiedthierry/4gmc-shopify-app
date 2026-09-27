@@ -114,7 +114,7 @@ async function pollSiteKitJob(){
         }
         
         try {
-            const result = await api('/api/store/publish', 'POST', {target_theme_id});
+            const result = await publishStoreAction();
             siteKitPlan = await api('/api/site-kit/plan');
             if(result.ok === false) {
                 siteKitLastRun = `Publication blocked. Missing: ${result.missing ? result.missing.join(', ') : 'Unknown'}`;
@@ -338,6 +338,13 @@ function design(){
  <h2>Generate & Build Store Design</h2>
  <p class="sub">Build responsive Liquid theme templates, map curated collections to dynamic carousels, setup 4-column footer, native payment SVG icons, checkout branding, Track123 tracking link, and SEO proposals.</p>
  <form id="store-design-form" class="form-grid">
+  <div class="full">
+   <label>Target Theme (Unpublished)</label>
+   <select id="target-theme-select" required>
+     <option value="">-- Loading themes... --</option>
+   </select>
+  </div>
+
   <div class="full actions">
    <button class="primary" ${!busy?'':'disabled'}>Generate & Build Store Design</button>
    <button type="button" class="secondary" data-action="publish-store-design" ${!busy?'':'disabled'}>Publish Verified Store Design</button>
@@ -455,7 +462,24 @@ function activity(){return header('Activity','A record of preparation and store 
 function render(){
  $('store-domain').textContent=data.store.domain||'No store connected';$('crumb').textContent=names[view];
  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
- $('main').innerHTML=({overview,products,pages,design,business,connections,tasks,activity}[view])();
+ 
+$('main').innerHTML=({overview,products,pages,design,business,connections,tasks,activity}[view])();
+if (view === 'design' && data && data.store && data.store.connected) {
+    api('/api/themes', 'GET').then(res => {
+        const sel = document.getElementById('target-theme-select');
+        if (sel && res.themes) {
+            const unpub = res.themes.filter(t => t.role !== 'MAIN');
+            sel.innerHTML = '<option value="">-- Select an Unpublished Theme --</option>' + 
+                unpub.map(t => `<option value="${t.id}">${t.name} (${t.role})</option>`).join('');
+            
+            // if there's only one unpublished theme or we want to pre-select
+            if (unpub.length > 0) {
+                sel.value = unpub[0].id;
+            }
+        }
+    }).catch(console.error);
+}
+
  if(editPage){
   const page=siteKitPlan?.pages?.find(p=>p.id===editPage);
   if(page){
@@ -491,7 +515,7 @@ document.body.addEventListener('click',e=>{
   case 'review-product':perform(async()=>{await api(`/api/products/${id}/review`,'POST');return 'Product reviewed and ready for Shopify draft upload.';});break;
   case 'upload-product':if(window.confirm('Send this reviewed product to Shopify as a hidden draft?'))perform(async()=>{await api(`/api/products/${id}/upload`,'POST');return 'Shopify draft uploaded and checked. Images may still be processing.';});break;
   case 'close-product':editProduct=null;render();break;
-  case 'run-site-kit':perform(async()=>{siteKitPlan=await api('/api/site-kit/plan');const result=await api('/api/store/publish','POST',{});siteKitPlan=await api('/api/site-kit/plan');siteKitLastRun=result.failed?`Published ${result.published.length} documents; stopped at ${result.failed}: ${result.detail}`:`Published ${result.published.length} pages and policies in Shopify.`;return siteKitLastRun;});break;
+  case 'run-site-kit':perform(async()=>{siteKitPlan=await api('/api/site-kit/plan');const result=await publishStoreAction();siteKitPlan=await api('/api/site-kit/plan');siteKitLastRun=result.failed?`Published ${result.published.length} documents; stopped at ${result.failed}: ${result.detail}`:`Published ${result.published.length} pages and policies in Shopify.`;return siteKitLastRun;});break;
   case 'edit-page':editPage=id;render();break;
   case 'close-page':editPage=null;render();break;
   case 'prepare-product':perform(async()=>{await api(`/api/products/${id}/prepare`,'POST');return 'AI prepared a draft. Review it before use.';});break;
@@ -531,7 +555,7 @@ document.body.addEventListener('click',e=>{
     break;
    }
 
-   case 'publish-store-design':perform(async()=>{await api('/api/store/publish','POST',{});return 'Applied verified store design directly to the live theme, navigation menus, payment icons, and Track123 setup to Shopify.';});break;
+   case 'publish-store-design': publishStoreAction(); break;
   case 'apply-usa':if(usaPlan&&window.confirm('Apply USA-only region markets and replace merchant shipping settings with free USA shipping? This may pause other markets and remove their current shipping rates.'))perform(async()=>{const result=await api('/api/shopify/usa-apply','POST',{fingerprint:usaPlan.fingerprint});usaPlan=null;return result.manual_steps.length?'USA market and merchant shipping verified. Check the remaining Shopify store details.':'USA market and merchant shipping verified in Shopify.';});break;
  }
 });
@@ -591,7 +615,7 @@ document.body.addEventListener('submit',e=>{
     await waitForSiteKitGeneration(stage);
     siteKitPlan=await api('/api/site-kit/plan');
     stage('Publishing pages and policies to Shopify…');
-    const pagesResult=await api('/api/store/publish','POST',{});
+    const pagesResult=await publishStoreAction();
     if(pagesResult.failed)throw new Error('Page '+pagesResult.failed+': '+pagesResult.detail);
     siteKitPlan=await api('/api/site-kit/plan');
    }
@@ -628,3 +652,24 @@ if(launchError){
 }
 setInterval(async()=>{if(!data||!(view==='tasks'||(data.jobs||[]).some(job=>['queued','running'].includes(job.status))))return;try{const result=await api('/api/jobs');data.jobs=result.jobs;data.task_capacity=result.capacity;if(view==='tasks')render();}catch{}},2000);
 refresh().catch(error=>showToast(error?.message||error,true));
+
+async function publishStoreAction() {
+    const sel = document.getElementById('target-theme-select');
+    const target_theme_id = sel ? sel.value : null;
+    if(!target_theme_id) {
+        showToast("Please select an unpublished target theme first.", true);
+        return {ok: false, error: "No target theme selected."};
+    }
+    try {
+        const result = await api('/api/store/publish', 'POST', {target_theme_id});
+        if (result.ok === false) {
+            showToast(`Publication blocked. Missing: ${result.missing ? result.missing.join(', ') : 'Unknown'}`, true);
+            return result;
+        }
+        showToast("Store templates prepared successfully. Check logs for DRY RUN or LIVE status.");
+        return result;
+    } catch(e) {
+        showToast(`Publication error: ${e.message || e}`, true);
+        return {ok: false, error: e.message};
+    }
+}
