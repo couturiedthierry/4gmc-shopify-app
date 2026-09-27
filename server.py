@@ -4059,194 +4059,6 @@ async def upload_product_image(product_id: int, request: Request):
 
 
 
-async def publish_store(request: Request):
-    require(request)
-    store_id = ACTIVE_STORE_ID.get()
-    
-    with db() as c:
-        store = store_row(c)
-        pages = [dict(r) for r in c.execute('SELECT title, kind FROM pages WHERE store_id=? AND status=\'published\'', (store_id,))]
-        products = [dict(r) for r in c.execute('SELECT id, images, shopify_id FROM products WHERE store_id=?', (store_id,))]
-        
-    required_pages = ['Legal Notice', 'Privacy Policy', 'Payment Policy', 'Shipping Policy', 'Terms of Service', 'Refund and Return Policy', 'Order Cancellation Policy', 'FAQ', 'About Us', 'Track Order', 'Contact Us', 'Warranty Policy']
-    required_legal = ['Contact Information', 'Legal Notice', 'Terms of Sale']
-    
-    missing = []
-    generated_pages = [p['title'].lower() for p in pages if p['kind'] in ('page', 'policy')]
-    generated_settings = [p['title'].lower() for p in pages if p['kind'] == 'legal_setting']
-    
-    for req in required_pages:
-        if req.lower() not in generated_pages:
-            missing.append(f"Page: {req}")
-            
-    for req in required_legal:
-        if req.lower() not in generated_settings:
-            missing.append(f"Legal Setting: {req}")
-            
-    if missing:
-        return {'ok': False, 'missing': missing}
-        
-    token = store.get('shopify_token')
-    if token: token = FERNET.decrypt(token.encode()).decode()
-    if not token:
-        fail('Shopify not connected', 400)
-    domain = store['domain']
-
-    logs = []
-    logs.append(f"=== EXECUTION MODE: {'DRY RUN' if DRY_RUN else 'LIVE'} ===")
-    logs.append("=== STAGE 4: PRODUCT MEDIA UPLOAD ===")
-    
-    for prod in products:
-        import json
-        images = json.loads(prod['images'] or '[]')
-        if not images:
-            logs.append(f"Product {prod['id']} has no uploaded images. Using placeholder logic. (Skipping upload)")
-            continue
-            
-        for img_url in images:
-            filename = img_url.split('/')[-1]
-            mime_type = "image/jpeg"
-            if filename.endswith(".png"): mime_type = "image/png"
-            elif filename.endswith(".webp"): mime_type = "image/webp"
-
-            # 1. Create Staged Upload
-            staged_mutation = """mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
-              stagedUploadsCreate(input: $input) {
-                stagedTargets { url resourceUrl parameters { name value } }
-                userErrors { field message }
-              }
-            }"""
-            staged_vars = {"input": [{"resource": "IMAGE", "filename": filename, "mimeType": mime_type, "httpMethod": "POST"}]}
-            logs.append(f"[GraphQL] Requesting staged upload for {filename}")
-            
-            target_url = "https://mock-staging.shopify.com"
-            resource_url = "https://mock-resource.shopify.com/image.jpg"
-            
-            if not DRY_RUN:
-                res = await shopify_graphql(domain, token, staged_mutation, staged_vars)
-                data = res.get('stagedUploadsCreate', {})
-                if data.get('userErrors'):
-                    fail(f"Staged upload error: {data['userErrors']}", 400)
-                target = data['stagedTargets'][0]
-                target_url = target['url']
-                resource_url = target['resourceUrl']
-                
-                import httpx
-                file_path = os.path.join('data/product-images', filename)
-                with open(file_path, 'rb') as img_f:
-                    files = {'file': (filename, img_f, mime_type)}
-                    data_params = {p['name']: p['value'] for p in target['parameters']}
-                    async with httpx.AsyncClient() as client:
-                        resp = await client.post(target_url, data=data_params, files=files)
-                        if resp.status_code >= 400:
-                            fail(f"Staging upload failed: {resp.text}", 500)
-                logs.append(f"   -> [HTTP POST] Uploaded file bytes to {target_url}")
-            else:
-                logs.append("   -> [DRY RUN] Skipped real HTTP POST to staging.")
-                
-            # 2. Attach Media to Product using productUpdate
-            media_mutation = """mutation productUpdate($input: ProductInput!, $media: [CreateMediaInput!]) {
-              productUpdate(input: $input, media: $media) {
-                product { id }
-                userErrors { field message }
-              }
-            }"""
-            media_vars = {
-                "input": {"id": prod.get('shopify_id', f"gid://shopify/Product/{prod['id']}")},
-                "media": [{"mediaContentType": "IMAGE", "originalSource": resource_url}]
-            }
-            logs.append(f"[GraphQL] Attaching {resource_url} to Product {prod.get('shopify_id')}")
-            if not DRY_RUN:
-                res = await shopify_graphql(domain, token, media_mutation, media_vars)
-                if res.get('productUpdate', {}).get('userErrors'):
-                    fail(f"Media attach error: {res['productUpdate']['userErrors']}", 400)
-            else:
-                logs.append("   -> [DRY RUN] Skipped productUpdate mutation.")
-
-    logs.append("\n=== STAGE 5: THEME INSPECTION & DUPLICATION ===")
-    theme_query = "{ themes(first: 10) { edges { node { id name role } } } }"
-    logs.append("[GraphQL] Inspecting themes...")
-    
-    if not DRY_RUN:
-        res = await shopify_graphql(domain, token, theme_query)
-        # Parse main theme ID
-        themes = [edge['node'] for edge in res.get('themes', {}).get('edges', [])]
-        main_theme = next((t for t in themes if t['role'] == 'MAIN'), None)
-        if not main_theme: fail("No main theme found", 500)
-        logs.append(f"Found MAIN theme: {main_theme['name']} ({main_theme['id']})")
-        logs.append("[REST] Inspecting main theme assets (templates/index.json, config/settings_data.json)...")
-        # In reality, Shopify does not allow direct cloning via src ID easily without zip.
-        # Apps push modifications to the live theme or an existing unpublished theme.
-        # We simulate preparing JSON changes for the 11 required sections securely.
-        logs.append("Preparing local JSON modifications for Hero, FAQ, Callouts, etc.")
-        logs.append("[REST] Simulating PUT /themes/{UNPUBLISHED_THEME_ID}/assets.json to write modifications.")
-        # asset_payload = {'asset': {'key': 'templates/index.json', 'value': modified_json}}
-        # await shopify_rest(domain, token, 'PUT', f'themes/{unpublished_id}/assets.json', asset_payload)
-        logs.append("SUCCESS: Storefront theme sections built securely.")
-    else:
-        logs.append("   -> [DRY RUN] Found mock MAIN theme. Skipped duplication.")
-        
-    logs.append("\n=== STAGE 5: CHECKOUT BRANDING ===")
-    shop_query = "{ shop { plan { displayName partnerDevelopment } } }"
-    
-    if not DRY_RUN:
-        shop_res = await shopify_graphql(domain, token, shop_query)
-        plan = shop_res.get('shop', {}).get('plan', {})
-        is_eligible = plan.get('displayName') == 'Shopify Plus' or plan.get('partnerDevelopment') is True
-    else:
-        # Mock checking logic
-        is_eligible = False
-        
-    logs.append(f"[GraphQL] Parsed shop plan capabilities.")
-    if is_eligible:
-        logs.append("[GraphQL] Executing checkoutBrandingUpsert mutation...")
-        if not DRY_RUN:
-            # Get store logo if it exists
-            logo_id = None
-            logo_url = store.get('logo_url')
-            if logo_url:
-                # 1. Create Staged Upload for Logo
-                logs.append("[GraphQL] Requesting staged upload for Logo")
-                staged_vars = {"input": [{"resource": "IMAGE", "filename": "logo.png", "mimeType": "image/png", "httpMethod": "POST"}]}
-                res = await shopify_graphql(domain, token, staged_mutation, staged_vars)
-                target = res.get('stagedUploadsCreate', {}).get('stagedTargets', [])[0]
-                logs.append(f"   -> [HTTP POST] Uploaded logo to {target['url']}")
-                
-                # 2. FileCreate to get Media ID
-                file_create_mutation = """mutation fileCreate($files: [FileCreateInput!]!) {
-                  fileCreate(files: $files) { files { id } userErrors { message } }
-                }"""
-                fc_vars = {"files": [{"originalSource": target['resourceUrl'], "contentType": "IMAGE"}]}
-                logs.append("[GraphQL] Creating File for Logo")
-                fc_res = await shopify_graphql(domain, token, file_create_mutation, fc_vars)
-                logo_id = fc_res.get('fileCreate', {}).get('files', [{}])[0].get('id')
-                
-            checkout_mutation = """mutation checkoutBrandingUpsert($checkoutBrandingInput: CheckoutBrandingInput!) {
-              checkoutBrandingUpsert(checkoutBrandingInput: $checkoutBrandingInput) {
-                checkoutBranding { designSystem { logo { imageId } colors { global { brand } } } }
-                userErrors { field message }
-              }
-            }"""
-            design = {"colors": {"global": {"brand": "#000000"}}}
-            if logo_id: design["logo"] = {"imageId": logo_id}
-            c_vars = {"checkoutBrandingInput": {"designSystem": design}}
-            res = await shopify_graphql(domain, token, checkout_mutation, c_vars)
-            if res.get('checkoutBrandingUpsert', {}).get('userErrors'):
-                fail(f"Checkout branding error", 500)
-            logs.append(f"[GraphQL] Successfully applied checkout branding (Logo ID: {logo_id})")
-    else:
-        logs.append("Checkout Branding Skipped: Automatic placement unavailable (Store is not Shopify Plus or Development).")
-        logs.append("Manual Setup: Go to Shopify Admin > Settings > Checkout > Customize to upload your logo.")
-
-    with db() as c:
-        event(c, store_id, "Executed publish routine" + (" (DRY RUN)" if DRY_RUN else ""))
-
-    return {'ok': True, 'message': 'Publish routine completed.', 'logs': logs}
-
-
-
-
-
 @app.get('/api/themes')
 async def get_themes(request: Request):
     require(request)
@@ -4672,8 +4484,6 @@ async def get_themes(request: Request):
 
     with db() as c: event(c, store_id, "Executed publish routine" + (" (DRY RUN)" if DRY_RUN else ""))
     return {'ok': True, 'message': 'Publish routine completed.', 'logs': logs}
-
-
 @app.post('/api/store/publish')
 async def publish_store(request: Request):
     require(request)
@@ -4720,11 +4530,10 @@ async def publish_store(request: Request):
     import json
     import time
     
-    # --- STAGE 5: THEME GENERATION & PRE-FLIGHT ---
+    # --- STAGE 5: PRE-FLIGHT THEME CHECKS ===")
     logs.append("\n=== STAGE 5: PRE-FLIGHT THEME CHECKS ===")
     
     if not DRY_RUN:
-        # Require UNPUBLISHED target BEFORE any writes
         theme_query = "{ themes(first: 20) { edges { node { id name role } } } }"
         res = await shopify_graphql(domain, token, theme_query)
         themes = [edge['node'] for edge in res.get('themes', {}).get('edges', [])]
@@ -4737,6 +4546,12 @@ async def publish_store(request: Request):
         
         assets_res = await shopify_rest(domain, token, 'GET', f'themes/{target_id_num}/assets.json')
         available_assets = [a['key'] for a in assets_res.get('assets', [])]
+        
+        # Block preparation if required sections are unsupported
+        required_liquid = ['sections/announcement-bar.liquid', 'sections/image-banner.liquid', 'sections/collection-list.liquid', 'sections/rich-text.liquid', 'sections/featured-collection.liquid', 'sections/image-with-text.liquid', 'sections/collapsible_content.liquid', 'sections/contact-form.liquid']
+        for req_liq in required_liquid:
+            if req_liq not in available_assets:
+                fail(f"Required section {req_liq} is unsupported by the target theme.", 400)
         
         backup_dir = os.path.join('data', 'backups')
         os.makedirs(backup_dir, exist_ok=True)
@@ -4806,7 +4621,6 @@ async def publish_store(request: Request):
         business = json.loads(store.get('business', '{}'))
         store_name = store.get('name', 'Our Store')
         
-        # 1. Homepage (index.json)
         index_res = await shopify_rest(domain, token, 'GET', f'themes/{target_id_num}/assets.json?asset[key]=templates/index.json')
         asset = index_res.get('asset', {}).get('value')
         if asset:
@@ -4841,7 +4655,6 @@ async def publish_store(request: Request):
             await shopify_rest(domain, token, 'PUT', f'themes/{target_id_num}/assets.json', {'asset': {'key': 'templates/index.json', 'value': json.dumps(index_json)}})
             logs.append("[REST] Populated Homepage JSON blocks with brand content.")
             
-        # 2. Clean Product Page (product.json)
         product_res = await shopify_rest(domain, token, 'GET', f'themes/{target_id_num}/assets.json?asset[key]=templates/product.json')
         asset_prod = product_res.get('asset', {}).get('value')
         if asset_prod:
@@ -4850,7 +4663,6 @@ async def publish_store(request: Request):
             if 'sections' in prod_json:
                 for s_key, s_val in prod_json['sections'].items():
                     if s_val.get('type') == 'main-product' and 'blocks' in s_val:
-                        # PRESERVE quantity, delivery, policy, inventory, sku, title, price, buy_buttons, description, variant_picker
                         allowed_blocks = ['title', 'price', 'variant_picker', 'buy_buttons', 'description', 'quantity_selector', 'delivery', 'policy', 'inventory', 'sku']
                         new_blocks = {}
                         new_block_order = []
@@ -4864,8 +4676,6 @@ async def publish_store(request: Request):
             await shopify_rest(domain, token, 'PUT', f'themes/{target_id_num}/assets.json', {'asset': {'key': 'templates/product.json', 'value': json.dumps(prod_json)}})
             logs.append("[REST] Cleaned Product Template JSON blocks while preserving quantity/delivery.")
 
-        # 3. Header & Footer
-        # Populate with brand data
         header_payload = {'asset': {'key': 'sections/header.json', 'value': json.dumps({"type": "header", "settings": {"logo_width": 150}})}}
         footer_payload = {'asset': {'key': 'sections/footer.json', 'value': json.dumps({"type": "footer", "settings": {"show_social": True}})}}
         if 'sections/header.liquid' in available_assets: await shopify_rest(domain, token, 'PUT', f'themes/{target_id_num}/assets.json', header_payload)

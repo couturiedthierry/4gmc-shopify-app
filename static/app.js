@@ -104,7 +104,27 @@ async function pollSiteKitJob(){
   if(job.store_id!==data.active_store_id){await refresh();showToast(`Page generation finished for ${job.store_name}. Select that store to review or publish it.`);return;}
   siteKitPlan=await api('/api/site-kit/plan');
   const skipped=job.result?.skipped?.length?` Shopify-managed pages skipped: ${job.result.skipped.join(', ')}.`:'';
-  if(data.store.connected){const result=await api(\'/api/store/publish\',\'POST\',{});siteKitPlan=await api('/api/site-kit/plan');siteKitLastRun=result.failed?`Generated the pages, but publishing stopped at ${result.failed}: ${result.detail}`:`Generated and published ${result.published.length} pages and policies in Shopify.`;}
+  if(data.store.connected){
+        let themeSelect = document.getElementById('target-theme-select');
+        let target_theme_id = themeSelect ? themeSelect.value : null;
+        if(!target_theme_id) {
+            const themesRes = await api('/api/themes', 'GET');
+            const unpub = themesRes.themes.find(t => t.role === 'UNPUBLISHED');
+            if (unpub) target_theme_id = unpub.id;
+        }
+        
+        try {
+            const result = await api('/api/store/publish', 'POST', {target_theme_id});
+            siteKitPlan = await api('/api/site-kit/plan');
+            if(result.ok === false) {
+                siteKitLastRun = `Publication blocked. Missing: ${result.missing ? result.missing.join(', ') : 'Unknown'}`;
+            } else {
+                siteKitLastRun = `Store templates prepared successfully. Check logs for DRY RUN or LIVE status.`;
+            }
+        } catch (e) {
+            siteKitLastRun = `Publication error: ${e.message || e}`;
+        }
+    }
   else siteKitLastRun=`Generated ${siteKitPlan.pages.length} destination-brand pages. Connect Shopify to publish them.`;
   await refresh();showToast(siteKitLastRun+skipped);
  }catch(error){showToast(error?.message||error,true);siteKitPollTimer=setTimeout(pollSiteKitJob,5000);}
@@ -471,7 +491,7 @@ document.body.addEventListener('click',e=>{
   case 'review-product':perform(async()=>{await api(`/api/products/${id}/review`,'POST');return 'Product reviewed and ready for Shopify draft upload.';});break;
   case 'upload-product':if(window.confirm('Send this reviewed product to Shopify as a hidden draft?'))perform(async()=>{await api(`/api/products/${id}/upload`,'POST');return 'Shopify draft uploaded and checked. Images may still be processing.';});break;
   case 'close-product':editProduct=null;render();break;
-  case 'run-site-kit':perform(async()=>{siteKitPlan=await api('/api/site-kit/plan');const result=await api(\'/api/store/publish\',\'POST\',{});siteKitPlan=await api('/api/site-kit/plan');siteKitLastRun=result.failed?`Published ${result.published.length} documents; stopped at ${result.failed}: ${result.detail}`:`Published ${result.published.length} pages and policies in Shopify.`;return siteKitLastRun;});break;
+  case 'run-site-kit':perform(async()=>{siteKitPlan=await api('/api/site-kit/plan');const result=await api('/api/store/publish','POST',{});siteKitPlan=await api('/api/site-kit/plan');siteKitLastRun=result.failed?`Published ${result.published.length} documents; stopped at ${result.failed}: ${result.detail}`:`Published ${result.published.length} pages and policies in Shopify.`;return siteKitLastRun;});break;
   case 'edit-page':editPage=id;render();break;
   case 'close-page':editPage=null;render();break;
   case 'prepare-product':perform(async()=>{await api(`/api/products/${id}/prepare`,'POST');return 'AI prepared a draft. Review it before use.';});break;
@@ -511,7 +531,7 @@ document.body.addEventListener('click',e=>{
     break;
    }
 
-   case 'publish-store-design':perform(async()=>{await api(\'/api/store/publish\',\'POST\',{});return 'Applied verified store design directly to the live theme, navigation menus, payment icons, and Track123 setup to Shopify.';});break;
+   case 'publish-store-design':perform(async()=>{await api('/api/store/publish','POST',{});return 'Applied verified store design directly to the live theme, navigation menus, payment icons, and Track123 setup to Shopify.';});break;
   case 'apply-usa':if(usaPlan&&window.confirm('Apply USA-only region markets and replace merchant shipping settings with free USA shipping? This may pause other markets and remove their current shipping rates.'))perform(async()=>{const result=await api('/api/shopify/usa-apply','POST',{fingerprint:usaPlan.fingerprint});usaPlan=null;return result.manual_steps.length?'USA market and merchant shipping verified. Check the remaining Shopify store details.':'USA market and merchant shipping verified in Shopify.';});break;
  }
 });
@@ -571,7 +591,7 @@ document.body.addEventListener('submit',e=>{
     await waitForSiteKitGeneration(stage);
     siteKitPlan=await api('/api/site-kit/plan');
     stage('Publishing pages and policies to Shopify…');
-    const pagesResult=await api(\'/api/store/publish\',\'POST\',{});
+    const pagesResult=await api('/api/store/publish','POST',{});
     if(pagesResult.failed)throw new Error('Page '+pagesResult.failed+': '+pagesResult.detail);
     siteKitPlan=await api('/api/site-kit/plan');
    }

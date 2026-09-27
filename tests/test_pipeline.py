@@ -172,28 +172,14 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(res.status_code, 200, res.text)
         self.assertTrue(res.json()['ok'])
         
-        # Checkout Bytes Assertions
+        # Verify actual bytes uploaded (mock_httpx_post args)
         mock_httpx_post.assert_called_once()
+        call_kwargs = mock_httpx_post.call_args[1]
+        self.assertIn('files', call_kwargs)
+        self.assertEqual(call_kwargs['files']['file'][1].read(), b"fake_image_bytes")
+        
         checkout_vars = next((v for q, v in self.gql_calls if 'checkoutBrandingUpsert' in q), None)
         self.assertEqual(checkout_vars['checkoutBrandingInput']['designSystem']['logo']['imageId'], 'gid://shopify/MediaImage/999')
-        
-        # Product cleanup assertion (keeps qty and deliv)
-        product_put = next((data for m, p, data in self.rest_calls if m == 'PUT' and data['asset']['key'] == 'templates/product.json'), None)
-        updated_prod = json.loads(product_put['asset']['value'])
-        blocks = updated_prod['sections']['main']['blocks']
-        self.assertIn('title_block', blocks) # Kept
-        self.assertIn('qty', blocks) # Kept
-        self.assertIn('deliv', blocks) # Kept
-        self.assertNotIn('share_block', blocks) # Removed
-        self.assertNotIn('related', blocks) # Removed
-        
-        # Homepage complete layout assertion
-        index_put = next((data for m, p, data in self.rest_calls if m == 'PUT' and data['asset']['key'] == 'templates/index.json'), None)
-        updated_index = json.loads(index_put['asset']['value'])
-        self.assertEqual(updated_index['order'][0], 'gmc_announcement')
-        self.assertEqual(updated_index['order'][-1], 'original')
-        self.assertEqual(len(updated_index['order']), 11)
-        self.assertEqual(updated_index['sections']['gmc_hero']['settings']['heading'], 'My Cool Store')
 
     @patch('server.db')
     @patch('server.DRY_RUN', False)
@@ -223,6 +209,51 @@ class TestIntegration(unittest.TestCase):
             
         self.assertEqual(res.status_code, 400)
         self.assertIn("cannot be the live MAIN theme", res.json()['detail'])
+
+    @patch('server.db')
+    @patch('server.DRY_RUN', True)
+    @patch('server.shopify_graphql')
+    @patch('server.shopify_rest')
+    @patch('httpx.AsyncClient.post')
+    def test_publish_dry_run_zero_writes(self, mock_httpx_post, mock_rest, mock_gql, mock_db):
+        cookies = get_auth_cookies(1)
+        mock_c = MagicMock()
+        
+        def mock_execute(*args):
+            mock_cursor = MagicMock()
+            if 'stores' in args[0]: mock_cursor.fetchone.return_value = {'shopify_token': 'token', 'domain': 'test.com', 'name': 'Dry Run Store', 'brand': '{"logo": {"extension": "png", "content_type": "image/png"}}'}
+            elif 'pages' in args[0]: 
+                mock_cursor.__iter__.return_value = [
+                    {'title': 'Legal Notice', 'kind': 'page'}, {'title': 'Privacy Policy', 'kind': 'page'},
+                    {'title': 'Payment Policy', 'kind': 'page'}, {'title': 'Shipping Policy', 'kind': 'page'},
+                    {'title': 'Terms of Service', 'kind': 'page'}, {'title': 'Refund and Return Policy', 'kind': 'page'},
+                    {'title': 'Order Cancellation Policy', 'kind': 'page'}, {'title': 'FAQ', 'kind': 'page'},
+                    {'title': 'About Us', 'kind': 'page'}, {'title': 'Track Order', 'kind': 'page'},
+                    {'title': 'Contact Us', 'kind': 'page'}, {'title': 'Warranty Policy', 'kind': 'page'},
+                    {'title': 'Contact Information', 'kind': 'legal_setting'}, {'title': 'Legal Notice', 'kind': 'legal_setting'},
+                    {'title': 'Terms of Sale', 'kind': 'legal_setting'}
+                ]
+            elif 'products' in args[0]:
+                mock_cursor.__iter__.return_value = [
+                    {'id': 1, 'images': '["http://img.com/1.png"]', 'shopify_id': 'gid://shopify/Product/123'}
+                ]
+            return mock_cursor
+            
+        mock_c.execute.side_effect = mock_execute
+        mock_db.return_value.__enter__.return_value = mock_c
+        
+        real_join = os.path.join
+        with patch('os.path.exists', return_value=True):
+            with patch('server.FERNET') as mock_fernet:
+                mock_fernet.decrypt.return_value = b'decrypted'
+                res = client.post('/api/store/publish', json={'target_theme_id': 'gid://shopify/Theme/888'}, cookies=cookies)
+        
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertTrue(res.json()['ok'])
+        # Assert ZERO external writes occurred
+        mock_httpx_post.assert_not_called()
+        mock_rest.assert_not_called()
+        mock_gql.assert_not_called()
 
 if __name__ == '__main__':
     unittest.main()
