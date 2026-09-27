@@ -28,6 +28,45 @@ def get_auth_cookies(store_id=1):
     return {'gmc_session': cookie, 'gmc_store_id': str(store_id)}
 
 class TestIntegration(unittest.TestCase):
+    def test_upload_invalid_format(self):
+        cookies = get_auth_cookies(1)
+        res = client.put('/api/products/1/image', files={'image': ('test.txt', b'not an image', 'text/plain')}, cookies=cookies)
+        self.assertEqual(res.status_code, 400)
+
+    def test_upload_oversized(self):
+        cookies = get_auth_cookies(1)
+        content = create_mock_image('JPEG', (5000, 5000))
+        res = client.put('/api/products/1/image', files={'image': ('test.jpg', content, 'image/jpeg')}, cookies=cookies)
+        self.assertEqual(res.status_code, 400)
+
+    @patch('server.db')
+    def test_upload_ownership(self, mock_db):
+        cookies = get_auth_cookies(2)
+        mock_c = MagicMock()
+        mock_c.execute.return_value.fetchone.return_value = None
+        mock_db.return_value.__enter__.return_value = mock_c
+        
+        content = create_mock_image('JPEG', (100, 100))
+        res = client.put('/api/products/1/image', files={'image': ('test.jpg', content, 'image/jpeg')}, cookies=cookies)
+        self.assertEqual(res.status_code, 404)
+
+    @patch('server.db')
+    def test_publish_gate(self, mock_db):
+        cookies = get_auth_cookies(1)
+        mock_c = MagicMock()
+        def mock_execute(*args):
+            mock_cursor = MagicMock()
+            if 'stores' in args[0]: mock_cursor.fetchone.return_value = {'shopify_token': 'token', 'domain': 'test.com'}
+            elif 'pages' in args[0]: mock_cursor.__iter__.return_value = [{'title': 'FAQ', 'kind': 'page'}]
+            else: mock_cursor.__iter__.return_value = []
+            return mock_cursor
+        mock_c.execute.side_effect = mock_execute
+        mock_db.return_value.__enter__.return_value = mock_c
+        
+        res = client.post('/api/store/publish', json={'target_theme_id': 'gid://shopify/Theme/999'}, cookies=cookies)
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.json()['ok'])
+
     @patch('server.db')
     @patch('server.DRY_RUN', False)
     @patch('server.shopify_graphql')
@@ -39,7 +78,7 @@ class TestIntegration(unittest.TestCase):
         
         def mock_execute(*args):
             mock_cursor = MagicMock()
-            if 'stores' in args[0]: mock_cursor.fetchone.return_value = {'shopify_token': 'token', 'domain': 'test.com', 'brand': '{"logo": {"extension": "png", "content_type": "image/png"}}'}
+            if 'stores' in args[0]: mock_cursor.fetchone.return_value = {'shopify_token': 'token', 'domain': 'test.com', 'name': 'My Cool Store', 'brand': '{"logo": {"extension": "png", "content_type": "image/png"}}'}
             elif 'pages' in args[0]: 
                 mock_cursor.__iter__.return_value = [
                     {'title': 'Legal Notice', 'kind': 'page'}, {'title': 'Privacy Policy', 'kind': 'page'},
@@ -84,7 +123,9 @@ class TestIntegration(unittest.TestCase):
                     {'key': 'sections/featured-collection.liquid'},
                     {'key': 'sections/image-with-text.liquid'},
                     {'key': 'sections/collapsible_content.liquid'},
-                    {'key': 'sections/contact-form.liquid'}
+                    {'key': 'sections/contact-form.liquid'},
+                    {'key': 'sections/header.liquid'},
+                    {'key': 'sections/footer.liquid'}
                 ]}
             if 'GET' == method and 'assets.json' in path and 'index.json' in path:
                 return {'asset': {'value': json.dumps({"sections": {"original": {}}, "order": ["original"]})}}
@@ -96,9 +137,11 @@ class TestIntegration(unittest.TestCase):
                             "blocks": {
                                 "title_block": {"type": "title"},
                                 "share_block": {"type": "share"},
-                                "related": {"type": "related-products"}
+                                "related": {"type": "related-products"},
+                                "qty": {"type": "quantity_selector"},
+                                "deliv": {"type": "delivery"}
                             },
-                            "block_order": ["title_block", "share_block", "related"]
+                            "block_order": ["title_block", "share_block", "qty", "deliv", "related"]
                         }
                     }, 
                     "order": ["main"]
@@ -134,23 +177,24 @@ class TestIntegration(unittest.TestCase):
         checkout_vars = next((v for q, v in self.gql_calls if 'checkoutBrandingUpsert' in q), None)
         self.assertEqual(checkout_vars['checkoutBrandingInput']['designSystem']['logo']['imageId'], 'gid://shopify/MediaImage/999')
         
-        # Product cleanup assertion
+        # Product cleanup assertion (keeps qty and deliv)
         product_put = next((data for m, p, data in self.rest_calls if m == 'PUT' and data['asset']['key'] == 'templates/product.json'), None)
-        self.assertIsNotNone(product_put)
         updated_prod = json.loads(product_put['asset']['value'])
         blocks = updated_prod['sections']['main']['blocks']
         self.assertIn('title_block', blocks) # Kept
+        self.assertIn('qty', blocks) # Kept
+        self.assertIn('deliv', blocks) # Kept
         self.assertNotIn('share_block', blocks) # Removed
         self.assertNotIn('related', blocks) # Removed
         
         # Homepage complete layout assertion
         index_put = next((data for m, p, data in self.rest_calls if m == 'PUT' and data['asset']['key'] == 'templates/index.json'), None)
-        self.assertIsNotNone(index_put)
         updated_index = json.loads(index_put['asset']['value'])
         self.assertEqual(updated_index['order'][0], 'gmc_announcement')
         self.assertEqual(updated_index['order'][-1], 'original')
-        self.assertEqual(len(updated_index['order']), 11) # 10 new + 1 original
-        
+        self.assertEqual(len(updated_index['order']), 11)
+        self.assertEqual(updated_index['sections']['gmc_hero']['settings']['heading'], 'My Cool Store')
+
     @patch('server.db')
     @patch('server.DRY_RUN', False)
     @patch('server.shopify_graphql')
@@ -175,7 +219,6 @@ class TestIntegration(unittest.TestCase):
         
         with patch('server.FERNET') as mock_fernet:
             mock_fernet.decrypt.return_value = b'dec'
-            # Pass MAIN theme ID
             res = client.post('/api/store/publish', json={'target_theme_id': 'gid://shopify/Theme/111'}, cookies=cookies)
             
         self.assertEqual(res.status_code, 400)
